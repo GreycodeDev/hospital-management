@@ -9,91 +9,146 @@ class BillingController {
     return `BILL${timestamp.slice(-6)}${random}`;
   }
 
-  // Add service to billing
-  async addService(req, res) {
-    try {
-      const {
-        patient_id,
-        admission_id,
-        service_id,
-        service_type,
-        description,
-        quantity,
-        unit_price,
-        notes
-      } = req.body;
+ // Add service to billing
+// Add service to billing
+async addService(req, res) {
+  try {
+    const {
+      patient_id,
+      admission_id,
+      service_id,
+      service_type,
+      description,
+      quantity,
+      unit_price,
+      notes
+    } = req.body;
 
-      // Validation
-      if (!patient_id || !service_type || !description || !unit_price) {
-        return res.status(400).json({
-          success: false,
-          message: 'Patient ID, service type, description, and unit price are required'
-        });
-      }
-
-      // Check if patient exists
-      const patient = await db.Patient.findByPk(patient_id);
-      if (!patient) {
-        return res.status(404).json({
-          success: false,
-          message: 'Patient not found'
-        });
-      }
-
-      // Check if admission exists if provided
-      if (admission_id) {
-        const admission = await db.Admission.findByPk(admission_id);
-        if (!admission) {
-          return res.status(404).json({
-            success: false,
-            message: 'Admission not found'
-          });
-        }
-      }
-
-      const billing = await db.Billing.create({
-        patient_id,
-        admission_id,
-        service_id,
-        service_type,
-        description,
-        quantity: quantity || 1,
-        unit_price,
-        notes,
-        added_by: req.user.userId
-      });
-
-      const newBilling = await db.Billing.findByPk(billing.id, {
-        include: [
-          {
-            model: db.Patient,
-            as: 'patient'
-          },
-          {
-            model: db.Admission,
-            as: 'admission'
-          },
-          {
-            model: db.Service,
-            as: 'service'
-          }
-        ]
-      });
-
-      res.status(201).json({
-        success: true,
-        message: 'Service added to billing successfully',
-        data: { billing: newBilling }
-      });
-
-    } catch (error) {
-      console.error('Add service error:', error);
-      res.status(500).json({
+    // Validation
+    if (!patient_id || !service_type || !description || !unit_price) {
+      return res.status(400).json({
         success: false,
-        message: 'Internal server error'
+        message: 'Patient ID, service type, description, and unit price are required'
       });
     }
+
+    // Validate service_type against allowed values
+    const allowedServiceTypes = [
+      'Consultation', 
+      'Laboratory', 
+      'Radiology', 
+      'Pharmacy', 
+      'Procedure', 
+      'Room', 
+      'Other',
+      'X-Ray',
+      'LabTest',
+      'Medication',
+      'Bed' // Add any other allowed values from your ENUM
+    ];
+
+    if (!allowedServiceTypes.includes(service_type)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid service type. Allowed values: ${allowedServiceTypes.join(', ')}`
+      });
+    }
+
+    // Check if patient exists
+    const patient = await db.Patient.findByPk(patient_id);
+    if (!patient) {
+      return res.status(404).json({
+        success: false,
+        message: 'Patient not found'
+      });
+    }
+
+    // Check if admission exists if provided
+    if (admission_id) {
+      const admission = await db.Admission.findByPk(admission_id);
+      if (!admission) {
+        return res.status(404).json({
+          success: false,
+          message: 'Admission not found'
+        });
+      }
+    }
+
+    // Calculate total amount
+    const calculatedQuantity = quantity || 1;
+    const totalAmount = parseFloat(unit_price) * calculatedQuantity;
+
+    const billing = await db.Billing.create({
+      patient_id,
+      admission_id: admission_id || null,
+      service_id: service_id || null,
+      service_type: service_type.toLowerCase(), // Ensure lowercase
+      description,
+      quantity: calculatedQuantity,
+      unit_price: parseFloat(unit_price),
+      total_amount: totalAmount,
+      notes: notes || null,
+      added_by: req.user.userId
+    });
+
+    const newBilling = await db.Billing.findByPk(billing.id, {
+      include: [
+        {
+          model: db.Patient,
+          as: 'patient',
+          attributes: ['id', 'name', 'patient_id']
+        },
+        {
+          model: db.Admission,
+          as: 'admission',
+          attributes: ['id', 'admission_date']
+        },
+        {
+          model: db.Service,
+          as: 'service',
+          attributes: ['id', 'name']
+        }
+      ]
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Service added to billing successfully',
+      data: { billing: newBilling }
+    });
+
+  } catch (error) {
+    console.error('Add service error:', error);
+    
+    // Handle specific database errors
+    if (error.name === 'SequelizeDatabaseError') {
+      if (error.parent?.code === 'WARN_DATA_TRUNCATED') {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid service type provided. Please check the allowed service types.'
+        });
+      }
+    }
+    
+    if (error.name === 'SequelizeValidationError') {
+      const validationErrors = error.errors.map(err => ({
+        field: err.path,
+        message: err.message
+      }));
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: validationErrors
+      });
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
   }
+}
 
   // Add bed charges for admission
   async addBedCharges(req, res) {

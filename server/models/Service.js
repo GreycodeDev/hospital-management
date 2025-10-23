@@ -15,7 +15,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     service_type: {
-      type: DataTypes.ENUM('Medication', 'LabTest', 'Procedure', 'Consultation', 'Room', 'Other'),
+      type: DataTypes.ENUM('Medication', 'LabTest', 'Procedure', 'Consultation', 'Room', 'Laboratory', 'Radiology', 'Pharmacy', 'Bed', 'X-Ray', 'Other'),
       allowNull: false
     },
     price: {
