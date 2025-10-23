@@ -33,6 +33,9 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: false
     },
+    description: {
+      type: DataTypes.STRING(255)
+    },
     notes: {
       type: DataTypes.TEXT
     }

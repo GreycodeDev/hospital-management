@@ -40,6 +40,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.ENUM('outpatient', 'inpatient', 'emergency'),
       defaultValue: 'outpatient'
     },
+    visit_date: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW
+    },
     status: {
       type: DataTypes.ENUM('registered', 'vitals_taken', 'doctor_seen', 'admitted', 'discharged'),
       defaultValue: 'registered'

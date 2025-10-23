@@ -27,6 +27,7 @@
     "sequelize-cli": "^6.6.3"
   },
   "devDependencies": {
+    "@greycode/env_init": "^1.0.5",
     "@greycode/gitignore_init": "^0.0.2",
     "nodemon": "^3.1.10"
   }
