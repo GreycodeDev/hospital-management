@@ -10,7 +10,8 @@ class BedController {
         limit = 10,
         status,
         ward_id,
-        bed_type
+        bed_type,
+        search
       } = req.query;
 
       const offset = (page - 1) * limit;
@@ -30,6 +31,13 @@ class BedController {
         whereClause.bed_type = bed_type;
       }
 
+      // Add search functionality for bed number
+      if (search) {
+        whereClause.bed_number = {
+          [Op.like]: `%${search}%`
+        };
+      }
+
       const { count, rows: beds } = await db.Bed.findAndCountAll({
         where: whereClause,
         include: [
@@ -41,7 +49,14 @@ class BedController {
             model: db.Admission,
             as: 'admissions',
             where: { status: 'Admitted' },
-            required: false
+            required: false,
+            include: [
+              {
+                model: db.Patient,
+                as: 'patient',
+                attributes: ['id', 'first_name', 'last_name']
+              }
+            ]
           }
         ],
         limit: parseInt(limit),
@@ -141,7 +156,8 @@ class BedController {
             include: [
               {
                 model: db.Patient,
-                as: 'patient'
+                as: 'patient',
+                attributes: ['id', 'first_name', 'last_name', 'patient_id']
               }
             ],
             order: [['admission_date', 'DESC']]
@@ -177,7 +193,8 @@ class BedController {
         bed_number,
         ward_id,
         daily_rate,
-        bed_type
+        bed_type,
+        status = 'Available'
       } = req.body;
 
       // Validation
@@ -213,7 +230,8 @@ class BedController {
         bed_number,
         ward_id,
         daily_rate: daily_rate || 100.00,
-        bed_type: bed_type || 'Standard'
+        bed_type: bed_type || 'Standard',
+        status: status
       });
 
       const newBed = await db.Bed.findByPk(bed.id, {
@@ -285,7 +303,7 @@ class BedController {
     }
   }
 
-  // Get bed statistics
+  // Get bed statistics - FIXED PROPERTY NAMES
   async getBedStats(req, res) {
     try {
       const totalBeds = await db.Bed.count();
@@ -293,31 +311,74 @@ class BedController {
       const occupiedBeds = await db.Bed.count({ where: { status: 'Occupied' } });
       const maintenanceBeds = await db.Bed.count({ where: { status: 'Maintenance' } });
 
+      // Calculate occupancy rate
+      const occupancyRate = totalBeds > 0 ? ((occupiedBeds / totalBeds) * 100).toFixed(2) : 0;
+
+      // Get beds by ward for detailed breakdown
       const bedsByWard = await db.Bed.findAll({
         attributes: [
           'ward_id',
-          [db.sequelize.fn('COUNT', db.sequelize.col('id')), 'total'],
-          [db.sequelize.fn('SUM', db.sequelize.literal('CASE WHEN status = "Available" THEN 1 ELSE 0 END')), 'available'],
-          [db.sequelize.fn('SUM', db.sequelize.literal('CASE WHEN status = "Occupied" THEN 1 ELSE 0 END')), 'occupied']
+          [db.sequelize.fn('COUNT', db.sequelize.col('Bed.id')), 'total'],
+          [db.sequelize.fn('SUM', db.sequelize.literal('CASE WHEN Bed.status = "Available" THEN 1 ELSE 0 END')), 'available'],
+          [db.sequelize.fn('SUM', db.sequelize.literal('CASE WHEN Bed.status = "Occupied" THEN 1 ELSE 0 END')), 'occupied'],
+          [db.sequelize.fn('SUM', db.sequelize.literal('CASE WHEN Bed.status = "Maintenance" THEN 1 ELSE 0 END')), 'maintenance']
         ],
-        include: [{ model: db.Ward, as: 'ward', attributes: ['ward_name'] }],
-        group: ['ward_id']
+        include: [
+          { 
+            model: db.Ward, 
+            as: 'ward', 
+            attributes: ['id', 'ward_name', 'ward_type'] 
+          }
+        ],
+        group: ['ward_id', 'ward.id'],
+        raw: true
       });
+
+      // Format the response to match frontend expectations
+      const formattedBedsByWard = bedsByWard.map(wardData => ({
+        ward_id: wardData.ward_id,
+        ward_name: wardData['ward.ward_name'],
+        total: parseInt(wardData.total) || 0,
+        available: parseInt(wardData.available) || 0,
+        occupied: parseInt(wardData.occupied) || 0,
+        maintenance: parseInt(wardData.maintenance) || 0
+      }));
 
       res.json({
         success: true,
         data: {
-          totalBeds,
-          availableBeds,
-          occupiedBeds,
-          maintenanceBeds,
-          occupancyRate: totalBeds > 0 ? ((occupiedBeds / totalBeds) * 100).toFixed(2) : 0,
-          bedsByWard
+          totalBeds: parseInt(totalBeds) || 0,
+          availableBeds: parseInt(availableBeds) || 0,
+          occupiedBeds: parseInt(occupiedBeds) || 0,
+          maintenanceBeds: parseInt(maintenanceBeds) || 0,
+          occupancyRate: parseFloat(occupancyRate) || 0,
+          bedsByWard: formattedBedsByWard
         }
       });
 
     } catch (error) {
       console.error('Get bed stats error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  }
+
+  // Get wards
+  async getWards(req, res) {
+    try {
+      const wards = await db.Ward.findAll({
+        attributes: ['id', 'ward_name', 'ward_type'],
+        order: [['ward_name', 'ASC']]
+      });
+
+      res.json({
+        success: true,
+        data: { wards }
+      });
+    } catch (error) {
+      console.error('Get wards error:', error);
       res.status(500).json({
         success: false,
         message: 'Internal server error'

@@ -61,6 +61,7 @@ export const bedAPI = {
   create: (data) => api.post('/beds', data),
   update: (id, data) => api.put(`/beds/${id}`, data),
   getStats: () => api.get('/beds/stats'),
+  getWards: () => api.get('/beds/wards'),
 };
 
 export const admissionAPI = {

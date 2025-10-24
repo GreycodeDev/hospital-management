@@ -18,6 +18,7 @@ import BedManagement from './pages/beds/BedManagement';
 import Billing from './pages/billing/Billing';
 import UserManagement from './pages/user/UserManagement';
 import Layout from './components/layout/Layout';
+import { ToastProvider } from './contexts/ToastContext';
 
 
 
@@ -143,9 +144,11 @@ function AppRoutes() {
 
 function App() {
   return (
-    <AuthProvider>
-      <AppRoutes />
-    </AuthProvider>
+    <ToastProvider>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </ToastProvider>
   );
 }
 
