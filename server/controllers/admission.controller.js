@@ -167,7 +167,7 @@ class AdmissionController {
   }
 
   // Discharge patient
-  async dischargePatient(req, res) {
+    async dischargePatient(req, res) {
     try {
       const { id } = req.params;
       const { 
@@ -179,6 +179,9 @@ class AdmissionController {
         final_diagnosis,
         discharge_type = 'routine'
       } = req.body;
+
+      console.log('Discharge request for admission:', id);
+      console.log('Discharge data:', req.body);
 
       const admission = await db.Admission.findByPk(id, {
         include: [
@@ -212,17 +215,21 @@ class AdmissionController {
 
       try {
         // Update admission with discharge data
-        await admission.update({
+        const updateData = {
           status: 'Discharged',
           discharge_date: new Date(),
-          discharge_notes,
-          discharge_summary,
-          discharge_instructions,
-          follow_up_date: follow_up_date || null,
-          medications,
-          final_diagnosis,
           discharge_type
-        }, { transaction });
+        };
+
+        // Only add fields if they are provided
+        if (discharge_notes !== undefined) updateData.discharge_notes = discharge_notes;
+        if (discharge_summary !== undefined) updateData.discharge_summary = discharge_summary;
+        if (discharge_instructions !== undefined) updateData.discharge_instructions = discharge_instructions;
+        if (follow_up_date) updateData.follow_up_date = follow_up_date;
+        if (medications !== undefined) updateData.medications = medications;
+        if (final_diagnosis !== undefined) updateData.final_diagnosis = final_diagnosis;
+
+        await admission.update(updateData, { transaction });
 
         // Update bed status
         await admission.bed.update({ status: 'Available' }, { transaction });
@@ -243,6 +250,8 @@ class AdmissionController {
           ]
         });
 
+        console.log('Patient discharged successfully:', id);
+
         res.json({
           success: true,
           message: 'Patient discharged successfully',
@@ -251,14 +260,24 @@ class AdmissionController {
 
       } catch (error) {
         await transaction.rollback();
+        console.error('Discharge transaction error:', error);
         throw error;
       }
 
     } catch (error) {
       console.error('Discharge patient error:', error);
+      
+      // Provide more specific error messages
+      if (error.name === 'SequelizeValidationError') {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error: ' + error.errors.map(e => e.message).join(', ')
+        });
+      }
+      
       res.status(500).json({
         success: false,
-        message: 'Internal server error'
+        message: 'Internal server error during discharge'
       });
     }
   }

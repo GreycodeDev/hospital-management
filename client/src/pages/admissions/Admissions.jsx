@@ -129,25 +129,62 @@ const Admissions = () => {
     }
   };
 
-  const handleDischarge = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrors({});
+const handleDischarge = async (e) => {
+  e.preventDefault();
+  setLoading(true);
+  setErrors({});
 
-    try {
-      await admissionAPI.discharge(selectedAdmission.id, dischargeData);
-      alert('Patient discharged successfully!');
-      setShowDischargeModal(false);
-      setSelectedAdmission(null);
-      resetDischargeForm();
-      execute({ page: currentPage, limit: 10, search: searchTerm, status: statusFilter });
-      fetchStats();
-    } catch (error) {
-      setErrors({ general: error.response?.data?.message || 'Failed to discharge patient' });
-    } finally {
-      setLoading(false);
+  console.log('Starting discharge process...');
+  console.log('Selected admission:', selectedAdmission);
+  console.log('Discharge data:', dischargeData);
+
+  try {
+    const dischargePayload = {
+      discharge_notes: dischargeData.discharge_summary,
+      discharge_summary: dischargeData.discharge_summary,
+      discharge_instructions: dischargeData.discharge_instructions,
+      follow_up_date: dischargeData.follow_up_date || null,
+      medications: dischargeData.medications,
+      final_diagnosis: dischargeData.final_diagnosis,
+      discharge_type: dischargeData.discharge_type
+    };
+
+    console.log('Sending discharge payload:', dischargePayload);
+
+    const response = await admissionAPI.dischargePatient(selectedAdmission.id, dischargePayload);
+    console.log('Discharge API response:', response);
+
+    alert('Patient discharged successfully!');
+    setShowDischargeModal(false);
+    setSelectedAdmission(null);
+    resetDischargeForm();
+    
+    // Refresh data
+    execute({ page: currentPage, limit: 10, search: searchTerm, status: statusFilter });
+    fetchStats();
+    
+  } catch (error) {
+    console.error('Discharge error details:', error);
+    console.error('Error response:', error.response);
+    
+    let errorMessage = 'Failed to discharge patient. Please try again.';
+    
+    if (error.response) {
+      // Server responded with error status
+      errorMessage = error.response.data?.message || `Server error: ${error.response.status}`;
+    } else if (error.request) {
+      // Request was made but no response received
+      errorMessage = 'No response from server. Please check your connection.';
+    } else {
+      // Something else happened
+      errorMessage = error.message || 'An unexpected error occurred.';
     }
-  };
+    
+    setErrors({ general: errorMessage });
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleView = (admission) => {
     setSelectedAdmission(admission);
