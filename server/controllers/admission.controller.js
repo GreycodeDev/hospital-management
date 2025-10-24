@@ -2,7 +2,7 @@ const db = require('../models/index.js');
 const { Op } = require('sequelize');
 
 class AdmissionController {
-  // Admit patient
+  // Admit patient - FIXED VISIT_ID ISSUE
   async admitPatient(req, res) {
     try {
       const {
@@ -75,29 +75,45 @@ class AdmissionController {
         });
       }
 
+      // FIX: Handle visit_id - convert empty string to null
+      const processedVisitId = visit_id === '' ? null : visit_id;
+
+      // If visit_id is provided, verify it exists
+      if (processedVisitId) {
+        const visit = await db.PatientVisit.findByPk(processedVisitId);
+        if (!visit) {
+          return res.status(404).json({
+            success: false,
+            message: 'Patient visit not found'
+          });
+        }
+      }
+
       // Start transaction
       const transaction = await db.sequelize.transaction();
 
       try {
-        // Create admission
+        // Create admission with processed visit_id
         const admission = await db.Admission.create({
           patient_id,
           bed_id,
-          visit_id,
+          visit_id: processedVisitId, // Use the processed value
           expected_stay_days,
           reason_for_admission,
           attending_physician,
-          insurance_info
+          insurance_info,
+          admission_date: new Date(),
+          status: 'Admitted'
         }, { transaction });
 
         // Update bed status
         await bed.update({ status: 'Occupied' }, { transaction });
 
         // Update patient visit if provided
-        if (visit_id) {
+        if (processedVisitId) {
           await db.PatientVisit.update(
             { admission_recommended: true, status: 'admitted' },
-            { where: { id: visit_id }, transaction }
+            { where: { id: processedVisitId }, transaction }
           );
         }
 
@@ -113,6 +129,10 @@ class AdmissionController {
               model: db.Bed,
               as: 'bed',
               include: [{ model: db.Ward, as: 'ward' }]
+            },
+            {
+              model: db.PatientVisit,
+              as: 'visit'
             }
           ]
         });
@@ -130,6 +150,15 @@ class AdmissionController {
 
     } catch (error) {
       console.error('Admit patient error:', error);
+      
+      // Handle specific database errors
+      if (error.name === 'SequelizeDatabaseError') {
+        return res.status(400).json({
+          success: false,
+          message: 'Database error: Invalid data provided'
+        });
+      }
+      
       res.status(500).json({
         success: false,
         message: 'Internal server error'
@@ -141,7 +170,15 @@ class AdmissionController {
   async dischargePatient(req, res) {
     try {
       const { id } = req.params;
-      const { discharge_notes } = req.body;
+      const { 
+        discharge_notes,
+        discharge_summary,
+        discharge_instructions,
+        follow_up_date,
+        medications,
+        final_diagnosis,
+        discharge_type = 'routine'
+      } = req.body;
 
       const admission = await db.Admission.findByPk(id, {
         include: [
@@ -174,10 +211,17 @@ class AdmissionController {
       const transaction = await db.sequelize.transaction();
 
       try {
-        // Update admission
+        // Update admission with discharge data
         await admission.update({
           status: 'Discharged',
-          discharge_date: new Date()
+          discharge_date: new Date(),
+          discharge_notes,
+          discharge_summary,
+          discharge_instructions,
+          follow_up_date: follow_up_date || null,
+          medications,
+          final_diagnosis,
+          discharge_type
         }, { transaction });
 
         // Update bed status
@@ -227,7 +271,8 @@ class AdmissionController {
         limit = 10,
         status,
         patient_id,
-        ward_id
+        ward_id,
+        search
       } = req.query;
 
       const offset = (page - 1) * limit;
@@ -246,7 +291,15 @@ class AdmissionController {
       const include = [
         {
           model: db.Patient,
-          as: 'patient'
+          as: 'patient',
+          where: search ? {
+            [Op.or]: [
+              { first_name: { [Op.like]: `%${search}%` } },
+              { last_name: { [Op.like]: `%${search}%` } },
+              { patient_id: { [Op.like]: `%${search}%` } }
+            ]
+          } : undefined,
+          required: !!search
         },
         {
           model: db.Bed,
@@ -254,16 +307,13 @@ class AdmissionController {
           include: [
             {
               model: db.Ward,
-              as: 'ward'
+              as: 'ward',
+              where: ward_id ? { id: ward_id } : undefined,
+              required: !!ward_id
             }
           ]
         }
       ];
-
-      // Filter by ward if provided
-      if (ward_id) {
-        include[1].where = { ward_id: ward_id };
-      }
 
       const { count, rows: admissions } = await db.Admission.findAndCountAll({
         where: whereClause,
@@ -396,6 +446,36 @@ class AdmissionController {
       const currentAdmissions = await db.Admission.count({ where: { status: 'Admitted' } });
       const dischargedAdmissions = await db.Admission.count({ where: { status: 'Discharged' } });
 
+      // Today's admissions
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const todayAdmissions = await db.Admission.count({
+        where: {
+          admission_date: {
+            [Op.gte]: today,
+            [Op.lt]: tomorrow
+          }
+        }
+      });
+
+      // Today's discharges
+      const todayDischarges = await db.Admission.count({
+        where: {
+          discharge_date: {
+            [Op.gte]: today,
+            [Op.lt]: tomorrow
+          }
+        }
+      });
+
+      // Bed occupancy rate
+      const totalBeds = await db.Bed.count();
+      const occupiedBeds = await db.Bed.count({ where: { status: 'Occupied' } });
+      const bedOccupancy = totalBeds > 0 ? ((occupiedBeds / totalBeds) * 100).toFixed(1) + '%' : '0%';
+
       // Average length of stay
       const avgStayResult = await db.Admission.findOne({
         where: {
@@ -420,6 +500,9 @@ class AdmissionController {
           totalAdmissions,
           currentAdmissions,
           dischargedAdmissions,
+          todayAdmissions,
+          todayDischarges,
+          bedOccupancy,
           averageLengthOfStay: avgStay
         }
       });
