@@ -2,15 +2,14 @@ const db = require('../models/index.js');
 const { Op } = require('sequelize');
 
 class PatientController {
-  // Generate unique patient ID
-  generatePatientId() {
+   static generatePatientId() {
     const timestamp = Date.now().toString();
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
     return `VCH${timestamp.slice(-6)}${random}`;
   }
 
   // Register new patient
-  async registerPatient(req, res) {
+ async registerPatient(req, res) {
     try {
       const {
         first_name,
@@ -47,8 +46,8 @@ class PatientController {
         });
       }
 
-      // Generate patient ID
-      const patientId = this.generatePatientId();
+      // Generate patient ID 
+      const patientId = PatientController.generatePatientId();
 
       // Create patient
       const patient = await db.Patient.create({

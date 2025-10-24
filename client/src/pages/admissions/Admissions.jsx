@@ -181,6 +181,7 @@ const handleDischarge = async (e) => {
     }
     
     setErrors({ general: errorMessage });
+    
   } finally {
     setLoading(false);
   }
