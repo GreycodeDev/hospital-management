@@ -282,6 +282,40 @@ class AdmissionController {
     }
   }
 
+async getDischargedWithBills(req, res) {
+  try {
+    const { search } = req.query;
+    // Query to get discharged patients who have bills
+    const patients = await db.Patient.findAll({
+      where: search ? {
+        [Op.or]: [
+          { first_name: { [Op.like]: `%${search}%` } },
+          { last_name: { [Op.like]: `%${search}%` } },
+          { patient_id: { [Op.like]: `%${search}%` } }
+        ]
+      } : {},
+      include: [{
+        model: db.Admission,
+        as: 'admissions',
+        where: { status: 'Discharged' },
+        required: true
+      }, {
+        model: db.Bill,
+        as: 'bills',
+        required: true
+      }]
+    });
+    
+    res.json({ success: true, data: { patients } });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+}
+
+
   // Get all admissions
   async getAllAdmissions(req, res) {
     try {

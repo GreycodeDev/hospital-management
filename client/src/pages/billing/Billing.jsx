@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { Search, DollarSign, FileText, Calendar, Eye, Plus, Filter, X, User } from 'lucide-react';
+import { Search, DollarSign, FileText, Calendar, Eye, Plus, Filter, X, User, CreditCard } from 'lucide-react';
 import { useApi } from '../../hooks/useApi';
-import { billingAPI, patientAPI } from '../../services/api';
+import { billingAPI, patientAPI, admissionAPI } from '../../services/api';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
 import Loader from '../../components/ui/Loader';
@@ -15,25 +14,28 @@ const Billing = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCreateBillModal, setShowCreateBillModal] = useState(false);
-  const [selectedPatient, setSelectedPatient] = useState(null);
   const [selectedBill, setSelectedBill] = useState(null);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({});
   const [filterStatus, setFilterStatus] = useState('all');
   
-  // Patient search states for Create Bill modal
-  const [billPatientSearch, setBillPatientSearch] = useState('');
-  const [showBillPatientResults, setShowBillPatientResults] = useState(false);
-  
-  // Patient search states for Payment modal
+  // Payment modal states
+  const [dischargedPatients, setDischargedPatients] = useState([]);
   const [paymentPatientSearch, setPaymentPatientSearch] = useState('');
-  const [showPaymentPatientResults, setShowPaymentPatientResults] = useState(false);
   const [selectedPaymentPatient, setSelectedPaymentPatient] = useState(null);
+  const [patientBills, setPatientBills] = useState([]);
+  const [selectedBillForPayment, setSelectedBillForPayment] = useState(null);
+  
+  // Create bill modal states
+  const [patientSearch, setPatientSearch] = useState('');
+  const [patientResults, setPatientResults] = useState([]);
+  const [showPatientResults, setShowPatientResults] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState(null);
   
   const [paymentData, setPaymentData] = useState({
     patient_id: '',
-    billing_id: '',
-    amount: '',
+    bill_id: '',
+    amount_paid: '',
     payment_method: 'cash',
     insurance_claim_number: '',
     notes: ''
@@ -41,7 +43,6 @@ const Billing = () => {
 
   const [billData, setBillData] = useState({
     patient_id: '',
-    admission_id: '',
     service_type: 'consultation',
     description: '',
     quantity: 1,
@@ -51,95 +52,152 @@ const Billing = () => {
   
   const { data: billingStats, loading: statsLoading, execute: refreshStats } = useApi(billingAPI.getStats);
   const { data: billsData, loading: billsLoading, execute: fetchBills } = useApi(
-    () => billingAPI.getPatientBillings(filterStatus, { page: currentPage, limit: 10, search: searchTerm }),
+    () => billingAPI.getAllBills(filterStatus, { page: currentPage, limit: 10, search: searchTerm }),
     true
   );
-  
-  // Separate API calls for patient search in different modals
-  const { data: billPatientResults, execute: searchBillPatients } = useApi(
-    () => patientAPI.search(billPatientSearch),
-    false
-  );
 
-  const { data: paymentPatientResults, execute: searchPaymentPatients } = useApi(
-    () => patientAPI.search(paymentPatientSearch),
-    false
-  );
+  // Fetch all patients for payment modal
+  const fetchAllPatients = async (search = '') => {
+    try {
+      setLoading(true);
+      const response = await patientAPI.getAll({ search }); // Use getAll instead of search
+      setDischargedPatients(response.data.patients || []);
+    } catch (error) {
+      console.error('Error fetching patients:', error);
+      setDischargedPatients([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // Fetch bills when filter or page changes
+  // Fetch patient bills when a patient is selected for payment
+  const fetchPatientBills = async (patientId) => {
+    try {
+      setLoading(true);
+      const response = await billingAPI.getPatientBillings(patientId);
+      setPatientBills(response.data.billings || []);
+    } catch (error) {
+      console.error('Error fetching patient bills:', error);
+      setPatientBills([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch patients for create bill modal
+// Fetch patients for create bill modal
+const searchPatients = async (query) => {
+  try {
+    if (!query.trim()) {
+      setPatientResults([]);
+      return;
+    }
+    
+    console.log('Searching patients with query:', query);
+    
+    let response;
+    try {
+      // Try the search endpoint
+      response = await patientAPI.search(query);
+      console.log('Search API response:', response.data);
+    } catch (searchError) {
+      console.log('Search API failed, trying getAll:', searchError);
+      // Fallback to getAll with search parameter
+      response = await patientAPI.getAll({ search: query });
+      console.log('GetAll API response:', response.data);
+    }
+    
+    // Extract patients from different possible response structures
+    let patients = [];
+    if (response.data) {
+      if (Array.isArray(response.data.patients)) {
+        patients = response.data.patients;
+      } else if (Array.isArray(response.data.data?.patients)) {
+        patients = response.data.data.patients;
+      } else if (Array.isArray(response.data)) {
+        patients = response.data;
+      } else if (response.data.patients && typeof response.data.patients === 'object') {
+        // If it's an object with patients property
+        patients = Object.values(response.data.patients);
+      }
+    }
+    
+    console.log('Final patients array:', patients);
+    setPatientResults(patients);
+    
+  } catch (error) {
+    console.error('Error searching patients:', error);
+    setPatientResults([]);
+  }
+};
+
+  // Effects
   useEffect(() => {
     fetchBills();
   }, [currentPage, filterStatus]);
 
-  // Trigger patient search for Bill modal
-  useEffect(() => {
-    if (billPatientSearch.length >= 2) {
-      const timer = setTimeout(() => {
-        searchBillPatients();
-        setShowBillPatientResults(true);
-      }, 300);
-      return () => clearTimeout(timer);
-    } else {
-      setShowBillPatientResults(false);
-    }
-  }, [billPatientSearch]);
-
-  // Trigger patient search for Payment modal
   useEffect(() => {
     if (paymentPatientSearch.length >= 2) {
       const timer = setTimeout(() => {
-        searchPaymentPatients();
-        setShowPaymentPatientResults(true);
+        fetchAllPatients(paymentPatientSearch);
       }, 300);
       return () => clearTimeout(timer);
-    } else {
-      setShowPaymentPatientResults(false);
+    } else if (paymentPatientSearch.length === 0) {
+      fetchAllPatients();
     }
   }, [paymentPatientSearch]);
 
+  useEffect(() => {
+    if (patientSearch.length >= 2) {
+      const timer = setTimeout(() => {
+        searchPatients(patientSearch);
+        setShowPatientResults(true);
+      }, 300);
+      return () => clearTimeout(timer);
+    } else {
+      setShowPatientResults(false);
+    }
+  }, [patientSearch]);
+
+  // Handlers
   const handleSearch = (e) => {
     e.preventDefault();
     setCurrentPage(1);
     fetchBills();
   };
 
-const handleCreateBill = async (e) => {
-  e.preventDefault();
-  setLoading(true);
-  setErrors({});
+  const handleCreateBill = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrors({});
 
-  try {
-    await billingAPI.addService(billData);
-    alert('Billing item added successfully!');
-    setShowCreateBillModal(false);
-    setBillData({
-      patient_id: '',
-      admission_id: '',
-      service_type: 'consultation',
-      description: '',
-      quantity: 1,
-      unit_price: '',
-      date_of_service: new Date().toISOString().split('T')[0]
-    });
-    refreshStats();
-    fetchBills();
-  } catch (error) {
-    if (error.response?.data?.errors) {
-      // Handle validation errors from backend
-      const validationErrors = {};
-      error.response.data.errors.forEach(err => {
-        validationErrors[err.field] = err.message;
-      });
-      setErrors(validationErrors);
-    } else {
+    // Validate required fields
+    if (!billData.patient_id || !billData.service_type || !billData.description || !billData.unit_price) {
       setErrors({ 
-        general: error.response?.data?.message || 'Failed to create billing item' 
+        general: 'Please fill all required fields: Patient, Service Type, Description, and Unit Price' 
       });
+      setLoading(false);
+      return;
     }
-  } finally {
-    setLoading(false);
-  }
-};
+
+    try {
+      console.log('Sending bill data:', billData); // Debug log
+      
+      await billingAPI.addService(billData);
+      alert('Service charge added successfully!');
+      setShowCreateBillModal(false);
+      resetCreateBillForm();
+      refreshStats();
+      fetchBills();
+    } catch (error) {
+      console.error('Create bill error:', error);
+      setErrors({ 
+        general: error.response?.data?.message || 'Failed to add service charge' 
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleProcessPayment = async (e) => {
     e.preventDefault();
@@ -147,19 +205,31 @@ const handleCreateBill = async (e) => {
     setErrors({});
 
     try {
-      await billingAPI.processPayment(paymentData.billing_id, paymentData);
+      // First ensure we have a final bill
+      if (selectedBillForPayment && !selectedBillForPayment.bill_number) {
+        // This is a billing item, not a final bill - generate final bill first
+        const billResponse = await billingAPI.generateFinalBill({
+          admission_id: selectedBillForPayment.admission_id
+        });
+        
+        // Then process payment against the generated bill
+        await billingAPI.processPayment(billResponse.data.bill.id, {
+          amount_paid: paymentData.amount_paid,
+          payment_method: paymentData.payment_method,
+          insurance_claim_number: paymentData.insurance_claim_number
+        });
+      } else {
+        // Process payment against existing final bill
+        await billingAPI.processPayment(selectedBillForPayment.id, {
+          amount_paid: paymentData.amount_paid,
+          payment_method: paymentData.payment_method,
+          insurance_claim_number: paymentData.insurance_claim_number
+        });
+      }
+      
       alert('Payment processed successfully!');
       setShowPaymentModal(false);
-      setPaymentData({
-        patient_id: '',
-        billing_id: '',
-        amount: '',
-        payment_method: 'cash',
-        insurance_claim_number: '',
-        notes: ''
-      });
-      setSelectedPaymentPatient(null);
-      setPaymentPatientSearch('');
+      resetPaymentForm();
       refreshStats();
       fetchBills();
     } catch (error) {
@@ -169,37 +239,103 @@ const handleCreateBill = async (e) => {
     }
   };
 
+  const handlePaymentPatientSelect = (patient) => {
+    setSelectedPaymentPatient(patient);
+    setPaymentData(prev => ({ ...prev, patient_id: patient.id }));
+    setPaymentPatientSearch('');
+    fetchPatientBills(patient.id);
+  };
+
+  const handleBillSelect = (bill) => {
+    setSelectedBillForPayment(bill);
+    const paymentAmount = bill.balance > 0 ? bill.balance : (bill.total_amount - (bill.amount_paid || 0));
+    setPaymentData(prev => ({
+      ...prev,
+      bill_id: bill.id,
+      amount_paid: paymentAmount
+    }));
+  };
+
+  const handlePatientSelect = (patient) => {
+    console.log('Patient selected:', patient);
+    
+    // Make sure we're getting the patient object correctly
+    if (!patient || !patient.id) {
+      console.error('Invalid patient object:', patient);
+      return;
+    }
+    
+    setSelectedPatient(patient);
+    
+    // Update billData with the patient_id
+    setBillData(prev => ({
+      ...prev,
+      patient_id: patient.id.toString() // Ensure it's a string
+    }));
+    
+    // Update the search input to show the selected patient's name
+    setPatientSearch(`${patient.first_name || ''} ${patient.last_name || ''}`.trim());
+    setShowPatientResults(false);
+    
+    console.log('After selection - selectedPatient:', patient);
+    console.log('After selection - billData.patient_id:', patient.id);
+  };
+
+  const resetCreateBillForm = () => {
+    setBillData({
+      patient_id: '',
+      service_type: 'consultation',
+      description: '',
+      quantity: 1,
+      unit_price: '',
+      date_of_service: new Date().toISOString().split('T')[0]
+    });
+    setSelectedPatient(null);
+    setPatientSearch('');
+  };
+
+  const resetPaymentForm = () => {
+    setPaymentData({
+      patient_id: '',
+      bill_id: '',
+      amount_paid: '',
+      payment_method: 'cash',
+      insurance_claim_number: '',
+      notes: ''
+    });
+    setSelectedPaymentPatient(null);
+    setSelectedBillForPayment(null);
+    setPatientBills([]);
+    setPaymentPatientSearch('');
+  };
+
+ const clearPatientSelection = () => {
+  console.log('Clearing patient selection');
+  setSelectedPatient(null);
+  setBillData(prev => ({ ...prev, patient_id: '' }));
+  setPatientSearch('');
+  setShowPatientResults(false);
+};
+
+  const clearPaymentPatientSelection = () => {
+    setSelectedPaymentPatient(null);
+    setSelectedBillForPayment(null);
+    setPatientBills([]);
+    setPaymentData(prev => ({ 
+      ...prev, 
+      patient_id: '', 
+      bill_id: '', 
+      amount_paid: '' 
+    }));
+    setPaymentPatientSearch('');
+  };
+
   const handleViewBill = (bill) => {
     setSelectedBill(bill);
     console.log('View bill:', bill);
   };
 
-  const handleBillPatientSelect = (patient) => {
-    setSelectedPatient(patient);
-    setBillData(prev => ({ ...prev, patient_id: patient.id }));
-    setBillPatientSearch('');
-    setShowBillPatientResults(false);
-  };
-
-  const handlePaymentPatientSelect = (patient) => {
-    setSelectedPaymentPatient(patient);
-    setPaymentData(prev => ({ ...prev, patient_id: patient.id }));
-    setPaymentPatientSearch('');
-    setShowPaymentPatientResults(false);
-  };
-
-  const clearBillPatient = () => {
-    setSelectedPatient(null);
-    setBillData(prev => ({ ...prev, patient_id: '' }));
-    setBillPatientSearch('');
-  };
-
-  const clearPaymentPatient = () => {
-    setSelectedPaymentPatient(null);
-    setPaymentData(prev => ({ ...prev, patient_id: '', billing_id: '', amount: '' }));
-    setPaymentPatientSearch('');
-  };
-
+  // Data
   const stats = [
     {
       title: 'Total Revenue',
@@ -227,26 +363,31 @@ const handleCreateBill = async (e) => {
     },
   ];
 
-  const serviceTypes = [
-    'consultation',
-    'laboratory',
-    'radiology',
-    'pharmacy',
-    'procedure',
-    'room_charges',
-    'other'
-  ];
+const serviceTypes = [
+  { value: 'Consultation', label: 'Consultation' },
+  { value: 'Laboratory', label: 'Laboratory Test' },
+  { value: 'Radiology', label: 'Radiology' },
+  { value: 'Pharmacy', label: 'Pharmacy' },
+  { value: 'Procedure', label: 'Procedure' },
+  { value: 'Room', label: 'Room Charges' },
+  { value: 'Bed', label: 'Bed Charges' },
+  { value: 'Medication', label: 'Medication' },
+  { value: 'LabTest', label: 'LabTest' },
+  { value: 'X-Ray', label: 'X-Ray' },
+  { value: 'Other', label: 'Other' }
+];
 
   const paymentMethods = [
-    'cash',
-    'credit_card',
-    'debit_card',
-    'insurance',
-    'bank_transfer'
+    { value: 'cash', label: 'Cash' },
+    { value: 'credit_card', label: 'Credit Card' },
+    { value: 'debit_card', label: 'Debit Card' },
+    { value: 'insurance', label: 'Insurance' },
+    { value: 'bank_transfer', label: 'Bank Transfer' }
   ];
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Billing</h1>
@@ -255,10 +396,10 @@ const handleCreateBill = async (e) => {
         <div className="flex space-x-3">
           <Button onClick={() => setShowCreateBillModal(true)}>
             <Plus className="h-4 w-4 mr-2" />
-            Create Bill
+            Add Service
           </Button>
           <Button variant="outline" onClick={() => setShowPaymentModal(true)}>
-            <DollarSign className="h-4 w-4 mr-2" />
+            <CreditCard className="h-4 w-4 mr-2" />
             Process Payment
           </Button>
         </div>
@@ -373,16 +514,16 @@ const handleCreateBill = async (e) => {
                         </div>
                       </td>
                       <td className="capitalize">{bill.service_type?.replace('_', ' ')}</td>
-                      <td className="font-medium">${bill.amount?.toLocaleString()}</td>
+                      <td className="font-medium">${bill.total_amount?.toLocaleString()}</td>
                       <td>
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          bill.status === 'paid' 
+                          bill.payment_status === 'Paid' 
                             ? 'bg-green-100 text-green-800'
-                            : bill.status === 'overdue'
-                            ? 'bg-red-100 text-red-800'
+                            : bill.balance === 0
+                            ? 'bg-green-100 text-green-800'
                             : 'bg-yellow-100 text-yellow-800'
                         }`}>
-                          {bill.status}
+                          {bill.payment_status || (bill.balance === 0 ? 'Paid' : 'Pending')}
                         </span>
                       </td>
                       <td>
@@ -401,21 +542,23 @@ const handleCreateBill = async (e) => {
                             <Eye className="h-4 w-4 mr-1" />
                             View
                           </Button>
-                          {bill.status === 'pending' && (
+                          {(bill.payment_status === 'Pending' || bill.balance > 0) && (
                             <Button 
                               size="sm"
                               onClick={() => {
                                 setPaymentData(prev => ({
                                   ...prev,
-                                  billing_id: bill.id,
+                                  bill_id: bill.id,
                                   patient_id: bill.patient_id,
-                                  amount: bill.amount
+                                  amount_paid: bill.balance || bill.total_amount
                                 }));
                                 setSelectedPaymentPatient({
                                   id: bill.patient_id,
-                                  name: bill.patient?.name,
+                                  first_name: bill.patient?.name?.split(' ')[0],
+                                  last_name: bill.patient?.name?.split(' ')[1],
                                   patient_id: bill.patient?.patient_id
                                 });
+                                setSelectedBillForPayment(bill);
                                 setShowPaymentModal(true);
                               }}
                             >
@@ -472,7 +615,7 @@ const handleCreateBill = async (e) => {
       {/* Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="card p-6 text-center">
-          <DollarSign className="h-8 w-8 text-primary-600 mx-auto mb-4" />
+          <CreditCard className="h-8 w-8 text-primary-600 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">Process Payment</h3>
           <p className="text-gray-600 mb-4">Record payments for patient bills</p>
           <Button 
@@ -485,13 +628,13 @@ const handleCreateBill = async (e) => {
         
         <div className="card p-6 text-center">
           <FileText className="h-8 w-8 text-primary-600 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">Generate Bill</h3>
-          <p className="text-gray-600 mb-4">Create bills for discharged patients</p>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Add Service</h3>
+          <p className="text-gray-600 mb-4">Create new service charges</p>
           <Button 
             className="w-full"
             onClick={() => setShowCreateBillModal(true)}
           >
-            Generate Bill
+            Add Service
           </Button>
         </div>
         
@@ -510,83 +653,112 @@ const handleCreateBill = async (e) => {
         isOpen={showCreateBillModal}
         onClose={() => {
           setShowCreateBillModal(false);
-          clearBillPatient();
+          resetCreateBillForm();
         }}
-        title="Create New Bill"
+        title="Add Service Charge"
+        size="md"
       >
+        {/* Add debug info temporarily */}
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+          <div className="text-sm text-yellow-800">
+            <strong>Debug Info:</strong><br />
+            Patient ID: {billData.patient_id || 'Not set'}<br />
+            Service Type: {billData.service_type}<br />
+            Description: {billData.description || 'Not set'}<br />
+            Unit Price: {billData.unit_price || 'Not set'}<br />
+            Selected Patient: {selectedPatient ? `${selectedPatient.first_name} ${selectedPatient.last_name}` : 'None'}
+          </div>
+        </div>
         <form onSubmit={handleCreateBill} className="space-y-4">
+          {/* Patient Selection */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select Patient *
+              Patient *
             </label>
-            
             {selectedPatient ? (
-              <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-blue-100 rounded-full">
-                    <User className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <div className="font-medium text-gray-900">{selectedPatient.name}</div>
-                    <div className="text-sm text-gray-600">ID: {selectedPatient.patient_id}</div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={clearBillPatient}
-                  className="p-1 hover:bg-blue-100 rounded"
-                >
-                  <X className="h-5 w-5 text-gray-500" />
-                </button>
-              </div>
-            ) : (
-              <div className="relative">
-                <Input
-                  placeholder="Search patient by name or ID..."
-                  value={billPatientSearch}
-                  onChange={(e) => setBillPatientSearch(e.target.value)}
-                  icon={<Search className="h-4 w-4" />}
-                />
-                {showBillPatientResults && billPatientResults?.data?.patients && billPatientResults.data.patients.length > 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                    {billPatientResults.data.patients.map(patient => (
-                      <div
-                        key={patient.id}
-                        className="p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
-                        onClick={() => handleBillPatientSelect(patient)}
-                      >
-                        <div className="font-medium text-gray-900">{patient.name}</div>
-                        <div className="text-sm text-gray-500">ID: {patient.patient_id}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {showBillPatientResults && billPatientResults?.data?.patients?.length === 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-center text-gray-500">
-                    No patients found
-                  </div>
-                )}
-              </div>
-            )}
+  <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+    <div className="flex items-center space-x-3">
+      <User className="h-5 w-5 text-green-600" />
+      <div>
+        <div className="font-medium text-gray-900">
+          {selectedPatient.first_name} {selectedPatient.last_name}
+        </div>
+        <div className="text-sm text-gray-600">
+          Patient ID: {selectedPatient.patient_id || selectedPatient.id}
+        </div>
+        <div className="text-xs text-green-600 font-medium">
+          ✓ Patient selected for billing
+        </div>
+      </div>
+    </div>
+    <button
+      type="button"
+      onClick={clearPatientSelection}
+      className="p-1 hover:bg-green-100 rounded transition-colors"
+    >
+      <X className="h-5 w-5 text-gray-500" />
+    </button>
+  </div>
+) : (
+  <div className="relative">
+    <Input
+      placeholder="Search patient by name or ID..."
+      value={patientSearch}
+      onChange={(e) => setPatientSearch(e.target.value)}
+      icon={<Search className="h-4 w-4" />}
+    />
+    {showPatientResults && patientResults.length > 0 && (
+      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+        {patientResults.map(patient => (
+          <div
+            key={patient.id}
+            className="p-3 hover:bg-blue-50 cursor-pointer border-b border-gray-100 transition-colors"
+            onClick={() => {
+              console.log('Clicking patient:', patient);
+              handlePatientSelect(patient);
+            }}
+          >
+            <div className="font-medium text-gray-900">
+              {patient.first_name} {patient.last_name}
+            </div>
+            <div className="text-sm text-gray-500">
+              ID: {patient.patient_id || patient.id} | 
+              Phone: {patient.phone_number || 'N/A'}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+    {showPatientResults && patientResults.length === 0 && patientSearch && (
+      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-4">
+        <div className="text-center text-gray-500">
+          No patients found for "{patientSearch}"
+        </div>
+      </div>
+    )}
+  </div>
+)}
           </div>
 
+          {/* Service Details */}
           <Select
-            label="Service Type"
+            label="Service Type *"
             value={billData.service_type}
             onChange={(e) => setBillData(prev => ({ ...prev, service_type: e.target.value }))}
             required
           >
             {serviceTypes.map(type => (
-              <option key={type} value={type}>
-                {type.replace('_', ' ').charAt(0).toUpperCase() + type.replace('_', ' ').slice(1)}
+              <option key={type.value} value={type.value}>
+                {type.label}
               </option>
             ))}
           </Select>
 
           <Input
-            label="Description"
+            label="Description *"
             value={billData.description}
             onChange={(e) => setBillData(prev => ({ ...prev, description: e.target.value }))}
+            placeholder="Brief description of the service"
             required
           />
 
@@ -595,31 +767,33 @@ const handleCreateBill = async (e) => {
               label="Quantity"
               type="number"
               value={billData.quantity}
-              onChange={(e) => setBillData(prev => ({ ...prev, quantity: parseInt(e.target.value) }))}
+              onChange={(e) => setBillData(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
               min="1"
-              required
             />
-
             <Input
-              label="Unit Price ($)"
+              label="Unit Price ($) *"
               type="number"
               step="0.01"
               value={billData.unit_price}
               onChange={(e) => setBillData(prev => ({ ...prev, unit_price: parseFloat(e.target.value) }))}
+              placeholder="0.00"
               required
             />
           </div>
 
-          <Input
-            label="Date of Service"
-            type="date"
-            value={billData.date_of_service}
-            onChange={(e) => setBillData(prev => ({ ...prev, date_of_service: e.target.value }))}
-            required
-          />
+          {billData.quantity > 1 && billData.unit_price && (
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <div className="text-sm text-gray-600">Total Amount</div>
+              <div className="text-lg font-semibold text-gray-900">
+                ${(billData.quantity * billData.unit_price).toFixed(2)}
+              </div>
+            </div>
+          )}
 
           {errors.general && (
-            <div className="text-red-600 text-sm">{errors.general}</div>
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+              <div className="text-sm text-red-700">{errors.general}</div>
+            </div>
           )}
 
           <div className="flex justify-end space-x-3 pt-4">
@@ -628,76 +802,84 @@ const handleCreateBill = async (e) => {
               variant="outline"
               onClick={() => {
                 setShowCreateBillModal(false);
-                clearBillPatient();
+                resetCreateBillForm();
               }}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={loading || !selectedPatient}>
-              {loading ? 'Creating...' : 'Create Bill'}
+            <Button 
+              type="submit" 
+              // disabled={loading || !selectedPatient || !billData.unit_price}
+            >
+              {loading ? 'Adding...' : 'Add Service'}
             </Button>
           </div>
         </form>
       </Modal>
 
-      {/* Process Payment Modal */}
+      {/* Enhanced Payment Modal */}
       <Modal
         isOpen={showPaymentModal}
         onClose={() => {
           setShowPaymentModal(false);
-          clearPaymentPatient();
+          resetPaymentForm();
         }}
         title="Process Payment"
+        size="lg"
       >
-        <form onSubmit={handleProcessPayment} className="space-y-4">
+        <form onSubmit={handleProcessPayment} className="space-y-6">
+          {/* Step 1: Select Patient */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select Patient *
-            </label>
-            
+            <h3 className="text-sm font-medium text-gray-900 mb-3">1. Select Patient</h3>
             {selectedPaymentPatient ? (
-              <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-lg">
                 <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-blue-100 rounded-full">
-                    <User className="h-5 w-5 text-blue-600" />
-                  </div>
+                  <User className="h-6 w-6 text-green-600" />
                   <div>
-                    <div className="font-medium text-gray-900">{selectedPaymentPatient.name}</div>
-                    <div className="text-sm text-gray-600">ID: {selectedPaymentPatient.patient_id}</div>
+                    <div className="font-medium text-gray-900">
+                      {selectedPaymentPatient.first_name} {selectedPaymentPatient.last_name}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      ID: {selectedPaymentPatient.patient_id}
+                    </div>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={clearPaymentPatient}
-                  className="p-1 hover:bg-blue-100 rounded"
+                  onClick={clearPaymentPatientSelection}
+                  className="p-1 hover:bg-green-100 rounded"
                 >
                   <X className="h-5 w-5 text-gray-500" />
                 </button>
               </div>
             ) : (
-              <div className="relative">
+              <div className="space-y-3">
                 <Input
-                  placeholder="Search patient by name or ID..."
+                  placeholder="Search patients by name or ID..."
                   value={paymentPatientSearch}
                   onChange={(e) => setPaymentPatientSearch(e.target.value)}
                   icon={<Search className="h-4 w-4" />}
                 />
-                {showPaymentPatientResults && paymentPatientResults?.data?.patients && paymentPatientResults.data.patients.length > 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                    {paymentPatientResults.data.patients.map(patient => (
+                {dischargedPatients.length > 0 && (
+                  <div className="border border-gray-200 rounded-lg max-h-48 overflow-y-auto">
+                    {dischargedPatients.map(patient => (
                       <div
                         key={patient.id}
-                        className="p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                        className="p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
                         onClick={() => handlePaymentPatientSelect(patient)}
                       >
-                        <div className="font-medium text-gray-900">{patient.name}</div>
-                        <div className="text-sm text-gray-500">ID: {patient.patient_id}</div>
+                        <div className="font-medium text-gray-900">
+                          {patient.first_name} {patient.last_name}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          ID: {patient.patient_id}
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
-                {showPaymentPatientResults && paymentPatientResults?.data?.patients?.length === 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-center text-gray-500">
+                {dischargedPatients.length === 0 && paymentPatientSearch && (
+                  <div className="text-center py-4 text-gray-500">
                     No patients found
                   </div>
                 )}
@@ -705,46 +887,134 @@ const handleCreateBill = async (e) => {
             )}
           </div>
 
-          <Select
-            label="Payment Method"
-            value={paymentData.payment_method}
-            onChange={(e) => setPaymentData(prev => ({ ...prev, payment_method: e.target.value }))}
-            required
-          >
-            {paymentMethods.map(method => (
-              <option key={method} value={method}>
-                {method.replace('_', ' ').charAt(0).toUpperCase() + method.replace('_', ' ').slice(1)}
-              </option>
-            ))}
-          </Select>
-
-          <Input
-            label="Amount ($)"
-            type="number"
-            step="0.01"
-            value={paymentData.amount}
-            onChange={(e) => setPaymentData(prev => ({ ...prev, amount: parseFloat(e.target.value) }))}
-            required
-          />
-
-          {paymentData.payment_method === 'insurance' && (
-            <Input
-              label="Insurance Claim Number"
-              value={paymentData.insurance_claim_number}
-              onChange={(e) => setPaymentData(prev => ({ ...prev, insurance_claim_number: e.target.value }))}
-              required
-            />
+          {/* Step 2: Select Bill */}
+          {selectedPaymentPatient && (
+            <div>
+              <h3 className="text-sm font-medium text-gray-900 mb-3">2. Select Bill</h3>
+              {patientBills.length > 0 ? (
+                <div className="space-y-2">
+                  {patientBills.map(bill => (
+                    <div
+                      key={bill.id}
+                      className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                        selectedBillForPayment?.id === bill.id
+                          ? 'border-blue-500 bg-blue-50'
+                          : 'border-gray-200 hover:border-blue-300'
+                      }`}
+                      onClick={() => handleBillSelect(bill)}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="font-medium text-gray-900">
+                            {bill.bill_number || `Service: ${bill.service_type}`}
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            Total: ${bill.total_amount} • 
+                            {bill.balance !== undefined ? ` Balance: $${bill.balance}` : ` Paid: $${bill.amount_paid || 0}`}
+                          </div>
+                          <div className="text-xs text-gray-500 capitalize">
+                            {bill.service_type?.replace('_', ' ')}
+                          </div>
+                        </div>
+                        <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          bill.payment_status === 'Paid' || bill.balance === 0
+                            ? 'bg-green-100 text-green-800'
+                            : bill.payment_status === 'Partial'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {bill.payment_status || (bill.balance === 0 ? 'Paid' : 'Pending')}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-4 text-gray-500">
+                  No bills found for this patient
+                </div>
+              )}
+            </div>
           )}
 
-          <Textarea
-            label="Notes"
-            value={paymentData.notes}
-            onChange={(e) => setPaymentData(prev => ({ ...prev, notes: e.target.value }))}
-            rows={3}
-          />
+          {/* Step 3: Payment Details */}
+          {selectedBillForPayment && (
+            <div>
+              <h3 className="text-sm font-medium text-gray-900 mb-3">3. Payment Details</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <Select
+                  label="Payment Method *"
+                  value={paymentData.payment_method}
+                  onChange={(e) => setPaymentData(prev => ({ ...prev, payment_method: e.target.value }))}
+                  required
+                >
+                  {paymentMethods.map(method => (
+                    <option key={method.value} value={method.value}>
+                      {method.label}
+                    </option>
+                  ))}
+                </Select>
+
+                <Input
+                  label="Amount ($) *"
+                  type="number"
+                  step="0.01"
+                  value={paymentData.amount_paid}
+                  onChange={(e) => setPaymentData(prev => ({ ...prev, amount_paid: parseFloat(e.target.value) }))}
+                  max={selectedBillForPayment.balance || selectedBillForPayment.total_amount}
+                  required
+                />
+              </div>
+
+              {paymentData.payment_method === 'insurance' && (
+                <Input
+                  label="Insurance Claim Number *"
+                  value={paymentData.insurance_claim_number}
+                  onChange={(e) => setPaymentData(prev => ({ ...prev, insurance_claim_number: e.target.value }))}
+                  required
+                />
+              )}
+
+              <Textarea
+                label="Notes"
+                value={paymentData.notes}
+                onChange={(e) => setPaymentData(prev => ({ ...prev, notes: e.target.value }))}
+                rows={2}
+                placeholder="Optional payment notes..."
+              />
+
+              {/* Payment Summary */}
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-gray-600">Bill Total:</span>
+                    <div className="font-semibold">${selectedBillForPayment.total_amount}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Current Balance:</span>
+                    <div className="font-semibold">
+                      ${selectedBillForPayment.balance || (selectedBillForPayment.total_amount - (selectedBillForPayment.amount_paid || 0))}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Payment Amount:</span>
+                    <div className="font-semibold text-blue-600">${paymentData.amount_paid}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Remaining Balance:</span>
+                    <div className="font-semibold">
+                      ${((selectedBillForPayment.balance || selectedBillForPayment.total_amount) - paymentData.amount_paid).toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {errors.general && (
-            <div className="text-red-600 text-sm">{errors.general}</div>
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+              <div className="text-sm text-red-700">{errors.general}</div>
+            </div>
           )}
 
           <div className="flex justify-end space-x-3 pt-4">
@@ -753,12 +1023,15 @@ const handleCreateBill = async (e) => {
               variant="outline"
               onClick={() => {
                 setShowPaymentModal(false);
-                clearPaymentPatient();
+                resetPaymentForm();
               }}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={loading || !selectedPaymentPatient}>
+            <Button 
+              type="submit" 
+              disabled={loading || !selectedPaymentPatient || !selectedBillForPayment}
+            >
               {loading ? 'Processing...' : 'Process Payment'}
             </Button>
           </div>

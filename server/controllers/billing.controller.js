@@ -9,146 +9,173 @@ class BillingController {
     return `BILL${timestamp.slice(-6)}${random}`;
   }
 
- // Add service to billing
-// Add service to billing
-async addService(req, res) {
-  try {
-    const {
-      patient_id,
-      admission_id,
-      service_id,
-      service_type,
-      description,
-      quantity,
-      unit_price,
-      notes
-    } = req.body;
+  // Get all bills with filtering
+  async getAllBills(req, res) {
+    try {
+      const {
+        page = 1,
+        limit = 10,
+        status,
+        search
+      } = req.query;
 
-    // Validation
-    if (!patient_id || !service_type || !description || !unit_price) {
-      return res.status(400).json({
-        success: false,
-        message: 'Patient ID, service type, description, and unit price are required'
-      });
-    }
-
-    // Validate service_type against allowed values
-    const allowedServiceTypes = [
-      'Consultation', 
-      'Laboratory', 
-      'Radiology', 
-      'Pharmacy', 
-      'Procedure', 
-      'Room', 
-      'Other',
-      'X-Ray',
-      'LabTest',
-      'Medication',
-      'Bed' // Add any other allowed values from your ENUM
-    ];
-
-    if (!allowedServiceTypes.includes(service_type)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid service type. Allowed values: ${allowedServiceTypes.join(', ')}`
-      });
-    }
-
-    // Check if patient exists
-    const patient = await db.Patient.findByPk(patient_id);
-    if (!patient) {
-      return res.status(404).json({
-        success: false,
-        message: 'Patient not found'
-      });
-    }
-
-    // Check if admission exists if provided
-    if (admission_id) {
-      const admission = await db.Admission.findByPk(admission_id);
-      if (!admission) {
-        return res.status(404).json({
-          success: false,
-          message: 'Admission not found'
-        });
+      const offset = (page - 1) * limit;
+      
+      // Build where clause for bills
+      const whereClause = {};
+      
+      if (status && status !== 'all') {
+        if (status === 'paid') {
+          whereClause.balance = 0;
+        } else if (status === 'pending') {
+          whereClause.balance = { [Op.gt]: 0 };
+        }
       }
-    }
 
-    // Calculate total amount
-    const calculatedQuantity = quantity || 1;
-    const totalAmount = parseFloat(unit_price) * calculatedQuantity;
+      // Build patient search condition
+      const patientWhere = {};
+      if (search) {
+        patientWhere[Op.or] = [
+          { first_name: { [Op.like]: `%${search}%` } },
+          { last_name: { [Op.like]: `%${search}%` } },
+          { patient_id: { [Op.like]: `%${search}%` } }
+        ];
+      }
 
-    const billing = await db.Billing.create({
-      patient_id,
-      admission_id: admission_id || null,
-      service_id: service_id || null,
-      service_type: service_type.toLowerCase(), // Ensure lowercase
-      description,
-      quantity: calculatedQuantity,
-      unit_price: parseFloat(unit_price),
-      total_amount: totalAmount,
-      notes: notes || null,
-      added_by: req.user.userId
-    });
-
-    const newBilling = await db.Billing.findByPk(billing.id, {
-      include: [
+      const include = [
         {
           model: db.Patient,
           as: 'patient',
-          attributes: ['id', 'name', 'patient_id']
+          where: search ? patientWhere : undefined,
+          required: !!search
         },
         {
           model: db.Admission,
-          as: 'admission',
-          attributes: ['id', 'admission_date']
-        },
-        {
-          model: db.Service,
-          as: 'service',
-          attributes: ['id', 'name']
+          as: 'admission'
         }
-      ]
-    });
+      ];
 
-    res.status(201).json({
-      success: true,
-      message: 'Service added to billing successfully',
-      data: { billing: newBilling }
-    });
+      const { count, rows: bills } = await db.Bill.findAndCountAll({
+        where: whereClause,
+        include: include,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        order: [['createdAt', 'DESC']] // FIXED: changed 'created_at' to 'createdAt'
+      });
 
-  } catch (error) {
-    console.error('Add service error:', error);
-    
-    // Handle specific database errors
-    if (error.name === 'SequelizeDatabaseError') {
-      if (error.parent?.code === 'WARN_DATA_TRUNCATED') {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid service type provided. Please check the allowed service types.'
-        });
-      }
-    }
-    
-    if (error.name === 'SequelizeValidationError') {
-      const validationErrors = error.errors.map(err => ({
-        field: err.path,
-        message: err.message
-      }));
-      
-      return res.status(400).json({
+      res.json({
+        success: true,
+        data: {
+          bills,
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: Math.ceil(count / limit),
+            total: count,
+            limit: parseInt(limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Get all bills error:', error);
+      res.status(500).json({
         success: false,
-        message: 'Validation error',
-        errors: validationErrors
+        message: 'Internal server error'
       });
     }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
   }
-}
+
+  // Add service to billing
+  async addService(req, res) {
+    try {
+      const {
+        patient_id,
+        admission_id,
+        service_id,
+        service_type,
+        description,
+        quantity,
+        unit_price,
+        notes
+      } = req.body;
+
+      // Validation
+      if (!patient_id || !service_type || !description || !unit_price) {
+        return res.status(400).json({
+          success: false,
+          message: 'Patient ID, service type, description, and unit price are required'
+        });
+      }
+
+      // Check if patient exists
+      const patient = await db.Patient.findByPk(patient_id);
+      if (!patient) {
+        return res.status(404).json({
+          success: false,
+          message: 'Patient not found'
+        });
+      }
+
+      // Calculate total amount
+      const calculatedQuantity = quantity || 1;
+      const totalAmount = parseFloat(unit_price) * calculatedQuantity;
+
+      const billing = await db.Billing.create({
+        patient_id,
+        admission_id: admission_id || null,
+        service_id: service_id || null,
+        service_type: service_type,
+        description,
+        quantity: calculatedQuantity,
+        unit_price: parseFloat(unit_price),
+        total_amount: totalAmount,
+        notes: notes || null,
+        added_by: req.user.userId
+      });
+
+      const newBilling = await db.Billing.findByPk(billing.id, {
+        include: [
+          {
+            model: db.Patient,
+            as: 'patient',
+            attributes: ['id', 'first_name', 'last_name', 'patient_id']
+          },
+          {
+            model: db.Admission,
+            as: 'admission',
+            attributes: ['id', 'admission_date']
+          }
+        ]
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Service added to billing successfully',
+        data: { billing: newBilling }
+      });
+
+    } catch (error) {
+      console.error('Add service error:', error);
+      
+      if (error.name === 'SequelizeValidationError') {
+        const validationErrors = error.errors.map(err => ({
+          field: err.path,
+          message: err.message
+        }));
+        
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: validationErrors
+        });
+      }
+      
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  }
 
   // Add bed charges for admission
   async addBedCharges(req, res) {
@@ -188,7 +215,7 @@ async addService(req, res) {
       const billing = await db.Billing.create({
         patient_id: admission.patient_id,
         admission_id: admission.id,
-        service_type: 'Bed',
+        service_type: 'room_charges',
         description: `Bed charges for ${days} day(s)`,
         quantity: days,
         unit_price: daily_rate,
@@ -227,6 +254,7 @@ async addService(req, res) {
         whereClause.is_paid = is_paid === 'true';
       }
 
+      // Get individual billings
       const billings = await db.Billing.findAll({
         where: whereClause,
         include: [
@@ -237,32 +265,37 @@ async addService(req, res) {
           {
             model: db.Admission,
             as: 'admission'
-          },
-          {
-            model: db.Service,
-            as: 'service'
           }
         ],
-        order: [['service_date', 'DESC']]
+        order: [['createdAt', 'DESC']] // FIXED: changed 'created_at' to 'createdAt'
       });
 
-      // Calculate totals
-      const totalAmount = billings.reduce((sum, billing) => sum + parseFloat(billing.total_amount), 0);
-      const paidAmount = billings
-        .filter(billing => billing.is_paid)
-        .reduce((sum, billing) => sum + parseFloat(billing.total_amount), 0);
-      const pendingAmount = totalAmount - paidAmount;
+      // Get final bills
+      const finalBills = await db.Bill.findAll({
+        where: { patient_id: patient_id },
+        include: [
+          {
+            model: db.Patient,
+            as: 'patient'
+          },
+          {
+            model: db.Admission,
+            as: 'admission'
+          }
+        ],
+        order: [['createdAt', 'DESC']] // FIXED: changed 'created_at' to 'createdAt'
+      });
+
+      // Combine both types of bills
+      const allBills = [
+        ...billings.map(b => ({ ...b.toJSON(), type: 'billing' })),
+        ...finalBills.map(b => ({ ...b.toJSON(), type: 'final_bill' }))
+      ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
       res.json({
         success: true,
         data: {
-          billings,
-          summary: {
-            totalAmount,
-            paidAmount,
-            pendingAmount,
-            totalItems: billings.length
-          }
+          billings: allBills
         }
       });
 
@@ -304,13 +337,6 @@ async addService(req, res) {
         return res.status(404).json({
           success: false,
           message: 'Admission not found'
-        });
-      }
-
-      if (admission.status !== 'Discharged') {
-        return res.status(400).json({
-          success: false,
-          message: 'Patient must be discharged before generating final bill'
         });
       }
 
@@ -430,26 +456,35 @@ async addService(req, res) {
         });
       }
 
-      if (bill.payment_status === 'Paid') {
+      if (bill.balance <= 0) {
         return res.status(400).json({
           success: false,
           message: 'Bill is already fully paid'
         });
       }
 
-      const newAmountPaid = parseFloat(bill.amount_paid) + parseFloat(amount_paid);
-      const balance = parseFloat(bill.total_amount) - newAmountPaid;
+      const paymentAmount = parseFloat(amount_paid);
+      if (paymentAmount > bill.balance) {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment amount exceeds bill balance'
+        });
+      }
+
+      const newBalance = parseFloat(bill.balance) - paymentAmount;
+      const newAmountPaid = parseFloat(bill.amount_paid || 0) + paymentAmount;
 
       await bill.update({
         amount_paid: newAmountPaid,
-        balance: balance,
+        balance: newBalance,
         payment_method: payment_method,
         insurance_claim_number: insurance_claim_number,
-        payment_date: new Date()
+        payment_date: new Date(),
+        payment_status: newBalance === 0 ? 'Paid' : 'Partial'
       });
 
-      // Mark all related billings as paid
-      if (balance <= 0) {
+      // Mark all related billings as paid if bill is fully paid
+      if (newBalance === 0) {
         await db.Billing.update(
           { is_paid: true },
           { where: { admission_id: bill.admission_id } }
@@ -492,8 +527,8 @@ async addService(req, res) {
       });
 
       const totalBills = await db.Bill.count();
-      const paidBills = await db.Bill.count({ where: { payment_status: 'Paid' } });
-      const pendingBills = await db.Bill.count({ where: { payment_status: 'Pending' } });
+      const paidBills = await db.Bill.count({ where: { balance: 0 } });
+      const pendingBills = await db.Bill.count({ where: { balance: { [Op.gt]: 0 } } });
 
       // Revenue by service type
       const revenueByService = await db.Billing.findAll({

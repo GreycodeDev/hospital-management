@@ -6,6 +6,9 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
+// Get all bills
+router.get('/bills', BillingController.getAllBills);
+
 router.get('/stats', BillingController.getBillingStats);
 router.get('/patient/:patient_id', BillingController.getPatientBillings);
 router.post('/service', requireBilling, BillingController.addService);

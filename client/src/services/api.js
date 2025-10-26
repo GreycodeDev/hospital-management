@@ -70,16 +70,43 @@ export const admissionAPI = {
   getById: (id) => api.get(`/admissions/${id}`),
   admitPatient: (data) => api.post('/admissions', data),
   dischargePatient: (id, data) => api.put(`/admissions/${id}/discharge`, data),
+  getDischargedWithBills: (id) => api.get(`/admissions/${id}/bill/discharged`),
   getStats: () => api.get('/admissions/stats'),
 };
 
 export const billingAPI = {
-  getPatientBillings: (patientId, params) => api.get(`/billing/patient/${patientId}`, { params }),
-  addService: (data) => api.post('/billing/service', data),
+  // Get all bills with filtering
+  getAllBills: (status = 'all', params = {}) => {
+    const queryParams = { ...params };
+    if (status !== 'all') {
+      queryParams.status = status;
+    }
+    return api.get('/billing/bills', { params: queryParams });
+  },
+  
+  // Get billings for specific patient
+  getPatientBillings: (patientId, params = {}) => 
+    api.get(`/billing/patient/${patientId}`, { params }),
+  
+  // Add service charge
+  addService: (data) => {
+    console.log('API - Sending data:', data); // Debug log
+    return api.post('/billing/service', data);
+  },
+  
+  // Add bed charges
   addBedCharges: (data) => api.post('/billing/bed-charges', data),
+  
+  // Generate final bill
   generateFinalBill: (data) => api.post('/billing/generate-bill', data),
+  
+  // Mark individual billing as paid
   markAsPaid: (id) => api.put(`/billing/${id}/mark-paid`),
+  
+  // Process payment for final bill
   processPayment: (billId, data) => api.put(`/billing/bill/${billId}/pay`, data),
+  
+  // Get billing statistics
   getStats: () => api.get('/billing/stats'),
 };
 
