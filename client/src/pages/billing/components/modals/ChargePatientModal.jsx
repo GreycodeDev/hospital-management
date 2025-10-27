@@ -286,16 +286,6 @@ const ChargePatientModal = ({ isOpen, onClose, onSuccess }) => {
           </div>
         )}
 
-        {/* Debug Info */}
-        <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
-          <div className="text-xs text-yellow-800 font-mono">
-            <strong>Debug:</strong><br />
-            Patient ID: {chargeData.patient_id || 'Not set'}<br />
-            Admission ID: {chargeData.admission_id || 'Not set'}<br />
-            Service ID: {chargeData.service_id || 'Not set'}
-          </div>
-        </div>
-
         {errors.general && (
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
             <div className="text-sm text-red-700">{errors.general}</div>

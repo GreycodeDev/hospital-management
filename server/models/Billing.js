@@ -5,8 +5,32 @@ module.exports = (sequelize, DataTypes) => {
       primaryKey: true,
       autoIncrement: true
     },
+    patient_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      references: {
+        model: 'patients',
+        key: 'id'
+      }
+    },
+    admission_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true, // Make it nullable since not all charges need admission
+      references: {
+        model: 'admissions',
+        key: 'id'
+      }
+    },
+    service_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'services',
+        key: 'id'
+      }
+    },
     service_type: {
-      type: DataTypes.ENUM('Bed', 'Medication', 'LabTest', 'Procedure', 'Consultation', 'Other'),
+      type: DataTypes.ENUM('Bed', 'Medication', 'LabTest', 'Procedure', 'Consultation', 'X-Ray', 'Laboritory', 'Pharmacy',  'Other'),
       allowNull: false
     },
     description: {
@@ -33,14 +57,22 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: false
     },
-    description: {
-      type: DataTypes.STRING(255)
-    },
     notes: {
       type: DataTypes.TEXT
+    },
+    added_by: {
+      type: DataTypes.INTEGER,
+      references: {
+        model: 'users',
+        key: 'id'
+      }
     }
   }, {
     tableName: 'billing',
+    // IMPORTANT: Ensure admission_id is not excluded
+    defaultScope: {
+      attributes: { exclude: [] }
+    },
     hooks: {
       beforeSave: (billing) => {
         if (billing.quantity && billing.unit_price) {
@@ -50,7 +82,6 @@ module.exports = (sequelize, DataTypes) => {
     }
   });
 
-  // Changed to static associate method
   Billing.associate = function(models) {
     Billing.belongsTo(models.Patient, { 
       foreignKey: 'patient_id', 

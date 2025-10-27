@@ -2,6 +2,12 @@ const db = require('../models/index.js');
 const { Op } = require('sequelize');
 
 class BillingController {
+  constructor() {
+    // Bind the method to maintain 'this' context
+    this.generateBillNumber = this.generateBillNumber.bind(this);
+    this.generateFinalBill = this.generateFinalBill.bind(this);
+  }
+
   // Generate bill number
   generateBillNumber() {
     const timestamp = Date.now().toString();
@@ -60,7 +66,7 @@ class BillingController {
         include: include,
         limit: parseInt(limit),
         offset: parseInt(offset),
-        order: [['createdAt', 'DESC']] // FIXED: changed 'created_at' to 'createdAt'
+        order: [['createdAt', 'DESC']]
       });
 
       res.json({
@@ -86,133 +92,146 @@ class BillingController {
   }
 
   // Add service to billing
-  // Add service to billing
-async addService(req, res) {
-  try {
-    const {
-      patient_id,
-      admission_id,
-      service_id,
-      service_type,
-      description,
-      quantity,
-      unit_price,
-      notes
-    } = req.body;
+  async addService(req, res) {
+    try {
+      const {
+        patient_id,
+        admission_id,
+        service_id,
+        service_type,
+        description,
+        quantity,
+        unit_price,
+        notes
+      } = req.body;
 
-    console.log('📝 Add service request:', {
-      patient_id,
-      admission_id,
-      service_type,
-      description
-    });
-
-    // Validation
-    if (!patient_id || !service_type || !description || !unit_price) {
-      return res.status(400).json({
-        success: false,
-        message: 'Patient ID, service type, description, and unit price are required'
+      console.log('📝 Add service request:', {
+        patient_id,
+        admission_id,
+        service_type,
+        description,
+        rawBody: req.body
       });
-    }
 
-    // Check if patient exists
-    const patient = await db.Patient.findByPk(patient_id);
-    if (!patient) {
-      return res.status(404).json({
-        success: false,
-        message: 'Patient not found'
-      });
-    }
-
-    // If no admission_id provided, try to find current admission
-    let admissionIdToUse = admission_id;
-    if (!admissionIdToUse) {
-      console.log('🔍 No admission_id provided, searching for current admission...');
-      const currentAdmission = await db.Admission.findOne({
-        where: { 
-          patient_id: patient_id,
-          status: 'Admitted'
-        },
-        order: [['admission_date', 'DESC']]
-      });
-      
-      if (currentAdmission) {
-        admissionIdToUse = currentAdmission.id;
-        console.log('✅ Found current admission:', admissionIdToUse);
-      } else {
-        console.log('ℹ️ No current admission found, service will be saved without admission_id');
+      // Validation
+      if (!patient_id || !service_type || !description || !unit_price) {
+        return res.status(400).json({
+          success: false,
+          message: 'Patient ID, service type, description, and unit price are required'
+        });
       }
-    }
 
-    // Calculate total amount
-    const calculatedQuantity = quantity || 1;
-    const totalAmount = parseFloat(unit_price) * calculatedQuantity;
+      // Check if patient exists
+      const patient = await db.Patient.findByPk(patient_id);
+      if (!patient) {
+        return res.status(404).json({
+          success: false,
+          message: 'Patient not found'
+        });
+      }
 
-    console.log('💾 Creating billing record with:', {
-      patient_id,
-      admission_id: admissionIdToUse,
-      service_type,
-      totalAmount
-    });
-
-    const billing = await db.Billing.create({
-      patient_id,
-      admission_id: admissionIdToUse, // Use the found admission_id or null
-      service_id: service_id || null,
-      service_type: service_type,
-      description,
-      quantity: calculatedQuantity,
-      unit_price: parseFloat(unit_price),
-      total_amount: totalAmount,
-      notes: notes || null,
-      added_by: req.user.userId
-    });
-
-    const newBilling = await db.Billing.findByPk(billing.id, {
-      include: [
-        {
-          model: db.Patient,
-          as: 'patient',
-          attributes: ['id', 'first_name', 'last_name', 'patient_id']
-        },
-        {
-          model: db.Admission,
-          as: 'admission',
-          attributes: ['id', 'admission_date', 'status']
+      // Handle admission_id - convert empty string or "null" string to actual null
+      let admissionIdToUse = admission_id;
+      if (!admissionIdToUse || admissionIdToUse === '' || admissionIdToUse === 'null' || admissionIdToUse === 'undefined') {
+        console.log('🔍 No valid admission_id provided, searching for current admission...');
+        const currentAdmission = await db.Admission.findOne({
+          where: { 
+            patient_id: patient_id,
+            status: 'Admitted'
+          },
+          order: [['admission_date', 'DESC']]
+        });
+        
+        if (currentAdmission) {
+          admissionIdToUse = currentAdmission.id;
+          console.log('✅ Found current admission:', admissionIdToUse);
+        } else {
+          admissionIdToUse = null;
+          console.log('ℹ️ No current admission found, service will be saved without admission_id');
         }
-      ]
-    });
+      } else {
+        // Verify the provided admission exists
+        const admission = await db.Admission.findByPk(admissionIdToUse);
+        if (!admission) {
+          return res.status(404).json({
+            success: false,
+            message: 'Admission not found'
+          });
+        }
+        console.log('✅ Using provided admission_id:', admissionIdToUse);
+      }
 
-    console.log('✅ Service added successfully:', newBilling.id);
+      // Calculate total amount
+      const calculatedQuantity = quantity || 1;
+      const totalAmount = parseFloat(unit_price) * calculatedQuantity;
 
-    res.status(201).json({
-      success: true,
-      message: 'Service added to billing successfully',
-      data: { billing: newBilling }
-    });
+      const billingData = {
+        patient_id: parseInt(patient_id),
+        admission_id: admissionIdToUse ? parseInt(admissionIdToUse) : null,
+        service_id: service_id ? parseInt(service_id) : null,
+        service_type: service_type,
+        description,
+        quantity: calculatedQuantity,
+        unit_price: parseFloat(unit_price),
+        total_amount: totalAmount,
+        notes: notes || null,
+        added_by: req.user.userId
+      };
 
-  } catch (error) {
-    console.error('💥 Add service error:', error);
-    
-    if (error.name === 'SequelizeValidationError') {
-      const validationErrors = error.errors.map(err => ({
-        field: err.path,
-        message: err.message
-      }));
+      console.log('💾 Creating billing record with:', billingData);
+
+      const billing = await db.Billing.create(billingData);
+
+      const newBilling = await db.Billing.findByPk(billing.id, {
+        include: [
+          {
+            model: db.Patient,
+            as: 'patient',
+            attributes: ['id', 'first_name', 'last_name', 'patient_id']
+          },
+          {
+            model: db.Admission,
+            as: 'admission',
+            attributes: ['id', 'admission_date', 'status']
+          }
+        ]
+      });
+
+      console.log('✅ Service added successfully:', {
+        id: newBilling.id,
+        admission_id: newBilling.admission_id,
+        patient_id: newBilling.patient_id
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Service added to billing successfully',
+        data: { billing: newBilling }
+      });
+
+    } catch (error) {
+      console.error('💥 Add service error:', error);
       
-      return res.status(400).json({
+      if (error.name === 'SequelizeValidationError') {
+        const validationErrors = error.errors.map(err => ({
+          field: err.path,
+          message: err.message
+        }));
+        
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: validationErrors
+        });
+      }
+      
+      res.status(500).json({
         success: false,
-        message: 'Validation error',
-        errors: validationErrors
+        message: 'Internal server error',
+        error: error.message
       });
     }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
   }
-}
 
   // Add bed charges for admission
   async addBedCharges(req, res) {
@@ -276,178 +295,25 @@ async addService(req, res) {
   }
 
   // Get billings for patient
-  async getPatientBillings(req, res) {
-    try {
-      const { patient_id } = req.params;
-      const { admission_id, is_paid } = req.query;
-
-      const whereClause = { patient_id: patient_id };
-
-      if (admission_id) {
-        whereClause.admission_id = admission_id;
-      }
-
-      if (is_paid !== undefined) {
-        whereClause.is_paid = is_paid === 'true';
-      }
-
-      // Get individual billings
-      const billings = await db.Billing.findAll({
-        where: whereClause,
-        include: [
-          {
-            model: db.Patient,
-            as: 'patient'
-          },
-          {
-            model: db.Admission,
-            as: 'admission'
-          }
-        ],
-        order: [['createdAt', 'DESC']] // FIXED: changed 'created_at' to 'createdAt'
-      });
-
-      // Get final bills
-      const finalBills = await db.Bill.findAll({
-        where: { patient_id: patient_id },
-        include: [
-          {
-            model: db.Patient,
-            as: 'patient'
-          },
-          {
-            model: db.Admission,
-            as: 'admission'
-          }
-        ],
-        order: [['createdAt', 'DESC']] // FIXED: changed 'created_at' to 'createdAt'
-      });
-
-      // Combine both types of bills
-      const allBills = [
-        ...billings.map(b => ({ ...b.toJSON(), type: 'billing' })),
-        ...finalBills.map(b => ({ ...b.toJSON(), type: 'final_bill' }))
-      ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-      res.json({
-        success: true,
-        data: {
-          billings: allBills
-        }
-      });
-
-    } catch (error) {
-      console.error('Get patient billings error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Internal server error'
-      });
-    }
-  }
-
-  // Generate final bill
-  // In your billing.controller.js - Replace the generateFinalBill method
-
-  // Generate final bill
-async generateFinalBill(req, res) {
+ // Get billings for patient
+async getPatientBillings(req, res) {
   try {
-    const { admission_id, patient_id } = req.body; // Also accept patient_id
+    const { patient_id } = req.params;
+    const { admission_id, is_paid } = req.query;
 
-    console.log('🎫 Generate final bill request:', { admission_id, patient_id });
+    const whereClause = { patient_id: patient_id };
 
-    let admission;
-    
     if (admission_id) {
-      // Use provided admission_id
-      admission = await db.Admission.findByPk(admission_id, {
-        include: [
-          {
-            model: db.Patient,
-            as: 'patient'
-          },
-          {
-            model: db.Billing,
-            as: 'billings'
-          }
-        ]
-      });
-    } else if (patient_id) {
-      // Find the most recent admission for the patient
-      admission = await db.Admission.findOne({
-        where: { patient_id: patient_id },
-        include: [
-          {
-            model: db.Patient,
-            as: 'patient'
-          },
-          {
-            model: db.Billing,
-            as: 'billings'
-          }
-        ],
-        order: [['admission_date', 'DESC']]
-      });
-      
-      if (!admission) {
-        return res.status(404).json({
-          success: false,
-          message: 'No admission found for this patient'
-        });
-      }
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Either admission_id or patient_id is required'
-      });
+      whereClause.admission_id = admission_id;
     }
 
-    if (!admission) {
-      return res.status(404).json({
-        success: false,
-        message: 'Admission not found'
-      });
+    if (is_paid !== undefined) {
+      whereClause.is_paid = is_paid === 'true';
     }
 
-    // Get ALL billings for this patient (not just those linked to admission)
-    const allPatientBillings = await db.Billing.findAll({
-      where: { 
-        patient_id: admission.patient_id,
-        is_paid: false // Only include unpaid billings
-      }
-    });
-
-    console.log('📊 Billings found:', {
-      admissionBillings: admission.billings?.length || 0,
-      allPatientBillings: allPatientBillings.length
-    });
-
-    // Calculate total amount from all unpaid billings
-    const totalAmount = allPatientBillings.reduce((sum, billing) => {
-      return sum + parseFloat(billing.total_amount);
-    }, 0);
-
-    // Check if bill already exists
-    const existingBill = await db.Bill.findOne({
-      where: { patient_id: admission.patient_id, balance: { [Op.gt]: 0 } }
-    });
-
-    if (existingBill) {
-      return res.status(400).json({
-        success: false,
-        message: 'Active bill already exists for this patient'
-      });
-    }
-
-    const bill = await db.Bill.create({
-      bill_number: this.generateBillNumber(),
-      patient_id: admission.patient_id,
-      admission_id: admission.id,
-      total_amount: totalAmount,
-      balance: totalAmount,
-      due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
-    });
-
-    const newBill = await db.Bill.findByPk(bill.id, {
+    // Get individual billings
+    const billings = await db.Billing.findAll({
+      where: whereClause,
       include: [
         {
           model: db.Patient,
@@ -457,28 +323,208 @@ async generateFinalBill(req, res) {
           model: db.Admission,
           as: 'admission'
         }
-      ]
+      ],
+      order: [['createdAt', 'DESC']]
     });
 
-    console.log('✅ Final bill generated:', newBill.bill_number);
+    // Get final bills - include both pending and paid
+    const finalBills = await db.Bill.findAll({
+      where: { patient_id: patient_id },
+      include: [
+        {
+          model: db.Patient,
+          as: 'patient'
+        },
+        {
+          model: db.Admission,
+          as: 'admission'
+        }
+      ],
+      order: [['createdAt', 'DESC']]
+    });
 
-    res.status(201).json({
+    // Separate the data instead of combining
+    res.json({
       success: true,
-      message: 'Final bill generated successfully',
-      data: { 
-        bill: newBill,
-        billings: allPatientBillings // Return the billings that were included
+      data: {
+        individual_billings: billings,
+        final_bills: finalBills,
+        // For backward compatibility, also include combined array
+        billings: [
+          ...billings.map(b => ({ ...b.toJSON(), type: 'billing' })),
+          ...finalBills.map(b => ({ ...b.toJSON(), type: 'final_bill' }))
+        ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
       }
     });
 
   } catch (error) {
-    console.error('💥 Generate final bill error:', error);
+    console.error('Get patient billings error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error'
     });
   }
 }
+
+  // Generate final bill
+  async generateFinalBill(req, res) {
+    try {
+      const { admission_id, patient_id } = req.body;
+
+      console.log('🎫 Generate final bill request:', { admission_id, patient_id });
+
+      let admission;
+      
+      if (admission_id) {
+        // Use provided admission_id
+        admission = await db.Admission.findByPk(admission_id, {
+          include: [
+            {
+              model: db.Patient,
+              as: 'patient'
+            },
+            {
+              model: db.Billing,
+              as: 'billings'
+            }
+          ]
+        });
+      } else if (patient_id) {
+        // Find the most recent admission for the patient
+        admission = await db.Admission.findOne({
+          where: { patient_id: patient_id },
+          include: [
+            {
+              model: db.Patient,
+              as: 'patient'
+            },
+            {
+              model: db.Billing,
+              as: 'billings'
+            }
+          ],
+          order: [['admission_date', 'DESC']]
+        });
+        
+        if (!admission) {
+          return res.status(404).json({
+            success: false,
+            message: 'No admission found for this patient'
+          });
+        }
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Either admission_id or patient_id is required'
+        });
+      }
+
+      if (!admission) {
+        return res.status(404).json({
+          success: false,
+          message: 'Admission not found'
+        });
+      }
+
+      // Get ALL billings for this patient (not just those linked to admission)
+      const allPatientBillings = await db.Billing.findAll({
+        where: { 
+          patient_id: admission.patient_id,
+          is_paid: false // Only include unpaid billings
+        },
+        include: [
+          {
+            model: db.Patient,
+            as: 'patient'
+          },
+          {
+            model: db.Admission,
+            as: 'admission'
+          }
+        ]
+      });
+
+      console.log('📊 Billings found:', {
+        admissionBillings: admission.billings?.length || 0,
+        allPatientBillings: allPatientBillings.length
+      });
+
+      // Calculate total amount from all unpaid billings
+      const totalAmount = allPatientBillings.reduce((sum, billing) => {
+        return sum + parseFloat(billing.total_amount || 0);
+      }, 0);
+
+      // Check if bill already exists
+      const existingBill = await db.Bill.findOne({
+        where: { 
+          patient_id: admission.patient_id, 
+          balance: { [Op.gt]: 0 } 
+        }
+      });
+
+      if (existingBill) {
+        return res.status(400).json({
+          success: false,
+          message: 'Active bill already exists for this patient'
+        });
+      }
+
+      // Generate bill number using the bound method
+      const billNumber = this.generateBillNumber();
+
+      const bill = await db.Bill.create({
+        bill_number: billNumber,
+        patient_id: admission.patient_id,
+        admission_id: admission.id,
+        total_amount: totalAmount,
+        amount_paid: 0,
+        balance: totalAmount,
+        payment_status: 'pending',
+        bill_date: new Date(),
+        due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
+      });
+
+      const newBill = await db.Bill.findByPk(bill.id, {
+        include: [
+          {
+            model: db.Patient,
+            as: 'patient'
+          },
+          {
+            model: db.Admission,
+            as: 'admission'
+          }
+        ]
+      });
+
+      console.log('✅ Final bill generated:', newBill.bill_number);
+      console.log('📋 Returning billings data:', allPatientBillings.map(b => ({
+        id: b.id,
+        service_type: b.service_type,
+        description: b.description,
+        quantity: b.quantity,
+        unit_price: b.unit_price,
+        total_amount: b.total_amount
+      })));
+
+      res.status(201).json({
+        success: true,
+        message: 'Final bill generated successfully',
+        data: { 
+          bill: newBill,
+          billings: allPatientBillings // Return the billings that were included
+        }
+      });
+
+    } catch (error) {
+      console.error('💥 Generate final bill error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: error.message
+      });
+    }
+  }
 
   // Mark billing as paid
   async markAsPaid(req, res) {
