@@ -6,8 +6,8 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
-router.get('/', PatientController.getAllPatients);
 router.get('/search', PatientController.searchPatients);
+router.get('/', PatientController.getAllPatients);
 router.get('/stats', PatientController.getPatientStats);
 router.get('/:id', PatientController.getPatientById);
 router.post('/', requireReception, PatientController.registerPatient);

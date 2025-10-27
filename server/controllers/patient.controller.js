@@ -82,82 +82,104 @@ class PatientController {
   }
 
   // Get all patients with pagination and search
-  async getAllPatients(req, res) {
-    try {
-      const {
-        page = 1,
-        limit = 10,
-        search,
-        gender
-      } = req.query;
+    async getAllPatients(req, res) {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      gender,
+      blood_type // Changed from blood_group
+    } = req.query;
 
-      const offset = (page - 1) * limit;
-      
-      // Build where clause
-      const whereClause = {};
-      
-      if (gender) {
-        whereClause.gender = gender;
-      }
-      
-      if (search) {
-        whereClause[Op.or] = [
-          { first_name: { [Op.like]: `%${search}%` } },
-          { last_name: { [Op.like]: `%${search}%` } },
-          { patient_id: { [Op.like]: `%${search}%` } },
-          { id_number: { [Op.like]: `%${search}%` } }
-        ];
-      }
+    console.log('📋 Get all patients request:', { search, gender, blood_type });
 
-      const { count, rows: patients } = await db.Patient.findAndCountAll({
-        where: whereClause,
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        order: [['createdAt', 'DESC']],
-        include: [
-          {
-            model: db.PatientVisit,
-            as: 'visits',
-            limit: 1,
-            order: [['visit_date', 'DESC']]
-          }
-        ]
-      });
-
-      res.json({
-        success: true,
-        data: {
-          patients,
-          pagination: {
-            currentPage: parseInt(page),
-            totalPages: Math.ceil(count / limit),
-            totalPatients: count,
-            patientsPerPage: parseInt(limit)
-          }
-        }
-      });
-
-    } catch (error) {
-      console.error('Get all patients error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Internal server error'
-      });
+    const offset = (page - 1) * limit;
+    
+    // Build where clause
+    const whereClause = {};
+    
+    if (search) {
+      whereClause[Op.or] = [
+        { first_name: { [Op.like]: `%${search}%` } },
+        { last_name: { [Op.like]: `%${search}%` } },
+        { patient_id: { [Op.like]: `%${search}%` } },
+        { phone_number: { [Op.like]: `%${search}%` } },
+        // Remove email from search since it doesn't exist
+      ];
     }
+    
+    if (gender) {
+      whereClause.gender = gender;
+    }
+    
+    if (blood_type) { // Changed from blood_group
+      whereClause.blood_type = blood_type; // Changed from blood_group
+    }
+
+    const { count, rows: patients } = await db.Patient.findAndCountAll({
+      where: whereClause,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      order: [['createdAt', 'DESC']],
+      // Remove attributes to let Sequelize handle the column selection automatically
+      // or specify only the columns that actually exist
+      attributes: [
+        'id', 
+        'patient_id', 
+        'first_name', 
+        'last_name', 
+        'date_of_birth', 
+        'gender', 
+        'phone_number', 
+        // 'email', // REMOVE THIS - doesn't exist
+        'blood_type', // Changed from blood_group
+        'address',
+        'next_of_kin_name', // Changed from emergency_contact_name
+        'next_of_kin_phone', // Changed from emergency_contact_phone
+        'allergies',
+        'emergency_contact',
+        'createdAt',
+        'updatedAt'
+      ]
+    });
+
+    console.log('✅ Found patients:', patients.length, 'of', count);
+
+    res.json({
+      success: true,
+      data: {
+        patients,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(count / limit),
+          totalPatients: count,
+          patientsPerPage: parseInt(limit)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('💥 Get all patients error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
   }
+}
+
+
 
   // Get patient by ID
   async getPatientById(req, res) {
     try {
       const { id } = req.params;
 
+      console.log('🔍 Get patient by ID:', id);
+
       const patient = await db.Patient.findByPk(id, {
         include: [
-          {
-            model: db.PatientVisit,
-            as: 'visits',
-            order: [['visit_date', 'DESC']]
-          },
           {
             model: db.Admission,
             as: 'admissions',
@@ -167,8 +189,15 @@ class PatientController {
                 as: 'bed',
                 include: [{ model: db.Ward, as: 'ward' }]
               }
-            ],
-            order: [['admission_date', 'DESC']]
+            ]
+          },
+          {
+            model: db.Billing,
+            as: 'billings'
+          },
+          {
+            model: db.Bill,
+            as: 'bills'
           }
         ]
       });
@@ -180,57 +209,89 @@ class PatientController {
         });
       }
 
+      console.log('✅ Patient found:', patient.patient_id);
+
       res.json({
         success: true,
         data: { patient }
       });
 
     } catch (error) {
-      console.error('Get patient by ID error:', error);
+      console.error('💥 Get patient by ID error:', error);
       res.status(500).json({
         success: false,
-        message: 'Internal server error'
+        message: 'Internal server error',
+        error: error.message
       });
     }
   }
 
   // Search patients
   async searchPatients(req, res) {
-    try {
-      const { query } = req.query;
+  try {
+    const { query, q, search } = req.query;
+    const searchTerm = query || q || search;
 
-      if (!query) {
-        return res.status(400).json({
-          success: false,
-          message: 'Search query is required'
-        });
-      }
+    console.log('🔍 Patient search request:', searchTerm);
 
-      const patients = await db.Patient.findAll({
-        where: {
-          [Op.or]: [
-            { first_name: { [Op.like]: `%${query}%` } },
-            { last_name: { [Op.like]: `%${query}%` } },
-            { patient_id: { [Op.like]: `%${query}%` } },
-            { id_number: { [Op.like]: `%${query}%` } }
-          ]
-        },
-        limit: 20
-      });
-
-      res.json({
-        success: true,
-        data: { patients }
-      });
-
-    } catch (error) {
-      console.error('Search patients error:', error);
-      res.status(500).json({
+    if (!searchTerm || searchTerm.length < 2) {
+      return res.status(400).json({
         success: false,
-        message: 'Internal server error'
+        message: 'Search query must be at least 2 characters'
       });
     }
+
+    const patients = await db.Patient.findAll({
+      where: {
+        [Op.or]: [
+          { first_name: { [Op.like]: `%${searchTerm}%` } },
+          { last_name: { [Op.like]: `%${searchTerm}%` } },
+          { patient_id: { [Op.like]: `%${searchTerm}%` } },
+          { phone_number: { [Op.like]: `%${searchTerm}%` } },
+          // Remove email from search since it doesn't exist
+        ]
+      },
+      // Remove attributes to let Sequelize handle the column selection automatically
+      // or specify only the columns that actually exist
+      attributes: [
+        'id', 
+        'patient_id', 
+        'first_name', 
+        'last_name', 
+        'date_of_birth', 
+        'gender', 
+        'phone_number', 
+        // 'email', // REMOVE THIS - doesn't exist
+        'blood_type', // Changed from blood_group
+        'address',
+        'next_of_kin_name', // Changed from emergency_contact_name
+        'next_of_kin_phone', // Changed from emergency_contact_phone
+        'allergies',
+        'emergency_contact'
+      ],
+      limit: 20,
+      order: [['first_name', 'ASC']]
+    });
+
+    console.log('✅ Found patients:', patients.length);
+
+    res.json({
+      success: true,
+      data: { 
+        patients,
+        count: patients.length
+      }
+    });
+
+  } catch (error) {
+    console.error('💥 Search patients error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
   }
+}
 
   // Update patient
   async updatePatient(req, res) {

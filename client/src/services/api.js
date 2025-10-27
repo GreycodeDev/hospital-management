@@ -9,24 +9,50 @@ const api = axios.create({
   },
 });
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token and log requests
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    
+    // Log the request for debugging
+    console.log('🌐 API Request:', {
+      method: config.method.toUpperCase(),
+      url: config.url,
+      params: config.params,
+      data: config.data
+    });
+    
     return config;
   },
   (error) => {
+    console.error('❌ Request interceptor error:', error);
     return Promise.reject(error);
   }
 );
 
-// Response interceptor to handle errors
+// Response interceptor to handle errors and log responses
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Log successful responses
+    console.log('✅ API Response:', {
+      url: response.config.url,
+      status: response.status,
+      data: response.data
+    });
+    return response;
+  },
   (error) => {
+    // Log error responses
+    console.error('❌ API Error:', {
+      url: error.config?.url,
+      status: error.response?.status,
+      message: error.response?.data?.message || error.message,
+      data: error.response?.data
+    });
+    
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
@@ -46,9 +72,18 @@ export const authAPI = {
 };
 
 export const patientAPI = {
-  getAll: (params) => api.get('/patients', { params }),
-  getById: (id) => api.get(`/patients/${id}`),
-  search: (query) => api.get('/patients/search', { params: { query } }),
+  getAll: (params) => {
+    console.log('🔍 patientAPI.getAll called with params:', params);
+    return api.get('/patients', { params });
+  },
+  getById: (id) => {
+    console.log('🔍 patientAPI.getById called with id:', id);
+    return api.get(`/patients/${id}`);
+  },
+  search: (query) => {
+    console.log('🔍 patientAPI.search called with query:', query);
+    return api.get('/patients/search', { params: { query } });
+  },
   register: (data) => api.post('/patients', data),
   update: (id, data) => api.put(`/patients/${id}`, data),
   getStats: () => api.get('/patients/stats'),
@@ -65,7 +100,10 @@ export const bedAPI = {
 };
 
 export const admissionAPI = {
-  getAll: (params) => api.get('/admissions', { params }),
+  getAll: (params) => {
+    console.log('🏥 admissionAPI.getAll called with params:', params);
+    return api.get('/admissions', { params });
+  },
   getCurrent: (params) => api.get('/admissions/current', { params }),
   getById: (id) => api.get(`/admissions/${id}`),
   admitPatient: (data) => api.post('/admissions', data),
@@ -75,38 +113,36 @@ export const admissionAPI = {
 };
 
 export const billingAPI = {
-  // Get all bills with filtering
   getAllBills: (status = 'all', params = {}) => {
     const queryParams = { ...params };
     if (status !== 'all') {
       queryParams.status = status;
     }
+    console.log('💰 billingAPI.getAllBills called:', queryParams);
     return api.get('/billing/bills', { params: queryParams });
   },
   
-  // Get billings for specific patient
-  getPatientBillings: (patientId, params = {}) => 
-    api.get(`/billing/patient/${patientId}`, { params }),
+  getPatientBillings: (patientId, params = {}) => {
+    console.log('💰 billingAPI.getPatientBillings called:', patientId, params);
+    return api.get(`/billing/patient/${patientId}`, { params });
+  },
   
-  // Add service charge
   addService: (data) => {
-    console.log('API - Sending data:', data); // Debug log
+    console.log('💰 billingAPI.addService called:', data);
     return api.post('/billing/service', data);
   },
   
-  // Add bed charges
   addBedCharges: (data) => api.post('/billing/bed-charges', data),
   
-  // Generate final bill
-  generateFinalBill: (data) => api.post('/billing/generate-bill', data),
+  generateFinalBill: (data) => {
+    console.log('💰 billingAPI.generateFinalBill called:', data);
+    return api.post('/billing/generate-bill', data);
+  },
   
-  // Mark individual billing as paid
   markAsPaid: (id) => api.put(`/billing/${id}/mark-paid`),
   
-  // Process payment for final bill
   processPayment: (billId, data) => api.put(`/billing/bill/${billId}/pay`, data),
   
-  // Get billing statistics
   getStats: () => api.get('/billing/stats'),
 };
 
