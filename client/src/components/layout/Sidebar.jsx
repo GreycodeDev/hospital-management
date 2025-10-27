@@ -36,7 +36,7 @@ const Sidebar = () => {
         <div className="flex items-center flex-shrink-0 px-4">
           <div className="w-8 h-8 bg-primary-600 rounded-lg"></div>
           <span className="ml-2 text-xl font-bold text-gray-800">
-            Victoria Hospital
+            Victoria Chitepo Hospital
           </span>
         </div>
         <div className="mt-8 flex-grow flex flex-col">
